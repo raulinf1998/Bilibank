@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowDownRight, ArrowLeftRight, ArrowUpRight, Bell, Briefcase, Check, Download, Landmark, LoaderCircle, Pencil, Plus, Search, StickyNote, Tag, Trash2, TriangleAlert, X,
+  ArrowDown, ArrowDownRight, ArrowLeftRight, ArrowUp, ArrowUpRight, Bell, Briefcase, Check, ChevronRight, Download, Landmark, LoaderCircle, Pencil, Plus, Search, StickyNote, Tag, Trash2, TriangleAlert, X,
 } from "lucide-react";
 import type { Account, AccountKind, Category, Holding, Operation, Tx } from "@/lib/mock";
 import { HOLDING_CATEGORIES, type HoldingCategory } from "@/lib/mock";
@@ -12,6 +12,7 @@ import { iconNode } from "@/lib/icons";
 import { KIND_LABEL, PERIODS } from "@/lib/mock";
 import { inPeriod, periodLabel } from "@/lib/series";
 import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown } from "@/lib/market";
+import { isTransfer, transferEndpoints } from "@/lib/ledger";
 import { formatEUR, formatEUR0, formatFullDate, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, Segmented, Select } from "./primitives";
 import { DateField } from "./datefield";
@@ -63,6 +64,8 @@ export function ModalHost() {
       return <NotificationsModal onClose={closeModal} />;
     case "confirmClear":
       return <ConfirmClearModal onClose={closeModal} />;
+    case "organizeCategories":
+      return <OrganizeCategoriesModal categoryId={modal.categoryId} onClose={closeModal} />;
     default:
       return null;
   }
@@ -346,9 +349,16 @@ function TxDetailModal({ txId, onClose }: { txId: number; onClose: () => void })
   const cat = categories.find((c) => c.id === tx.categoryId);
   const sub = cat?.subcategories.find((s) => s.id === tx.subcategoryId);
   const acc = accounts.find((a) => a.id === tx.accountId);
+  const ends = isTransfer(tx) ? transferEndpoints(tx, transactions, accounts) : null;
   const rowsInfo: [string, string][] = [
     ["Fecha", formatFullDate(tx.date)],
-    ["Cuenta", acc ? acc.name : "—"],
+    ...(ends
+      ? ([
+          ["Cuenta de origen", ends.from?.name ?? "—"],
+          ["Cuenta de destino", ends.to?.name ?? "—"],
+          ["Tipo", tx.amount < 0 ? "Salida de dinero" : "Entrada de dinero"],
+        ] as [string, string][])
+      : ([["Cuenta", acc ? acc.name : "—"]] as [string, string][])),
     ["Categoría", cat ? `${cat.name} › ${sub?.name ?? "—"}` : "Traspaso entre cuentas"],
     ...(tx.tags?.length ? ([["Etiquetas", tx.tags.map((t) => `#${t}`).join(" ")]] as [string, string][]) : []),
     ...(tx.note ? ([["Nota", tx.note]] as [string, string][]) : []),
@@ -583,6 +593,115 @@ function NotificationsModal({ onClose }: { onClose: () => void }) {
 }
 
 /* ------------------------------ Confirmar borrado ------------------------------ */
+
+
+/* ------------------------------ Organizar categorías ------------------------------ */
+
+function OrganizeCategoriesModal({ categoryId, onClose }: { categoryId?: number; onClose: () => void }) {
+  const {
+    categories,
+    transactions,
+    reorderCategory,
+    reorderSubcategory,
+    promoteSubcategory,
+    demoteCategory,
+    moveSubcategory,
+  } = usePreview();
+  const [expanded, setExpanded] = useState<number[]>(categoryId ? [categoryId] : []);
+
+  const toggle = (id: number) => setExpanded((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]));
+  const countFor = (catId: number, subId?: number) =>
+    transactions.filter((t) => t.categoryId === catId && (subId === undefined || t.subcategoryId === subId)).length;
+
+  const arrow = (disabled: boolean, label: string, icon: ReactNode, onClick: () => void) => (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="grid h-7 w-7 shrink-0 place-items-center disabled:opacity-30"
+      style={{ color: "var(--muted)", border: `1px solid ${disabled ? "var(--border)" : "var(--border-strong)"}`, borderRadius: "var(--radius-sm)" }}
+    >
+      {icon}
+    </button>
+  );
+
+  return (
+    <Modal
+      title="Organizar categorías"
+      sub="Cambia el orden o convierte categorías en subcategorías y al revés"
+      onClose={onClose}
+      width={660}
+      footer={<Btn onClick={onClose}>Hecho</Btn>}
+    >
+      <p className="pv-faint mb-3 text-[11px] leading-snug">
+        Al convertir, los movimientos se mueven con la categoría: no se pierde ningún registro.
+      </p>
+
+      <div className="flex flex-col gap-2">
+        {categories.map((c, index) => {
+          const open = expanded.includes(c.id);
+          const others = categories.filter((x) => x.id !== c.id);
+          return (
+            <div key={c.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--surface-2)" }}>
+              <div className="flex items-center gap-2 p-2">
+                {arrow(index === 0, "Subir categoría", <ArrowUp className="h-3.5 w-3.5" />, () => reorderCategory(c.id, -1))}
+                {arrow(index === categories.length - 1, "Bajar categoría", <ArrowDown className="h-3.5 w-3.5" />, () => reorderCategory(c.id, 1))}
+                <button type="button" onClick={() => toggle(c.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform" style={{ color: "var(--faint)", transform: open ? "rotate(90deg)" : undefined }} />
+                  <span className="shrink-0" style={{ color: chartColor(c.colorIdx) }}>{iconNode(c.icon)}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>{c.name}</span>
+                    <span className="pv-faint block text-[10.5px]">{c.subcategories.length} subcategorías · {countFor(c.id)} movimientos</span>
+                  </span>
+                </button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Select
+                    aria-label={`Convertir ${c.name} en subcategoría de otra categoría`}
+                    value=""
+                    onChange={(e) => { if (e.target.value) demoteCategory(c.id, Number(e.target.value)); }}
+                    style={{ width: 168, fontSize: 11 }}
+                  >
+                    <option value="">Convertir en subcategoría de…</option>
+                    {others.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </Select>
+                </div>
+              </div>
+
+              {open && (
+                <div className="flex flex-col gap-1.5 px-2 pb-2 pl-6">
+                  {c.subcategories.length === 0 && <p className="pv-faint text-[11px]">Sin subcategorías.</p>}
+                  {c.subcategories.map((sub, i) => (
+                    <div key={sub.id} className="flex items-center gap-2" style={{ padding: "5px 8px", background: "var(--bg)", borderRadius: "var(--radius-sm)" }}>
+                      {arrow(i === 0, "Subir subcategoría", <ArrowUp className="h-3 w-3" />, () => reorderSubcategory(c.id, sub.id, -1))}
+                      {arrow(i === c.subcategories.length - 1, "Bajar subcategoría", <ArrowDown className="h-3 w-3" />, () => reorderSubcategory(c.id, sub.id, 1))}
+                      <span className="shrink-0" style={{ color: chartColor(subColor(c, sub)) }}>{iconNode(sub.icon)}</span>
+                      <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text)" }}>{sub.name}</span>
+                      <span className="pv-faint pv-num shrink-0 text-[10.5px]">{countFor(c.id, sub.id)} mov.</span>
+                      <Btn variant="ghost" size="sm" aria={`Convertir ${sub.name} en categoría propia`} onClick={() => promoteSubcategory(c.id, sub.id)}>
+                        <ArrowUpRight className="mr-1 inline h-3 w-3" /> A categoría
+                      </Btn>
+                      <Select
+                        aria-label={`Mover ${sub.name} a otra categoría`}
+                        value=""
+                        onChange={(e) => { if (e.target.value) moveSubcategory(c.id, sub.id, Number(e.target.value)); }}
+                        style={{ width: 132, fontSize: 11 }}
+                      >
+                        <option value="">Mover a…</option>
+                        {others.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
 
 function ConfirmClearModal({ onClose }: { onClose: () => void }) {
   const { transactions, clearTransactions } = usePreview();

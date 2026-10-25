@@ -10,11 +10,12 @@ import { CAT_ICON, iconNode } from "@/lib/icons";
 import { countryDistribution, countryTop5, holdingPath, monthlyContributions, sectorDistribution, type ContribResult, type MapEntry } from "@/lib/investing";
 import { WorldMap } from "./worldmap";
 import { PeriodBar } from "./periodbar";
-import type { ChartStyleKey } from "@/lib/themes";
+import type { CardStyleKey, ChartStyleKey } from "@/lib/themes";
 import { chartColor, onColor, type ColorRef } from "@/lib/colors";
 import { FULL_DAYS, TODAY, addDays, periodRange, bucketLabels, changePct, expandSeries, flowsFor, inPeriod, periodDays, periodLabel, periodMonths, periodShort, periodStart, sampleAtBuckets, windowSeries } from "@/lib/series";
 import { formatEUR, formatEUR0, formatNum, formatPct, formatDate, formatFullDate, formatSigned } from "@/lib/format";
 import { shortDate, todayIso } from "@/lib/market";
+import { isTransfer, runningBalances, singleAccount, transferEndpoints } from "@/lib/ledger";
 import { CompareBars, Donut, HBars, MultiLines, Sparkline, StackedArea, StackedBars, TrendChart, downsample } from "./charts";
 import { HoverLayer, TipBody, TipRow } from "./hover";
 import { BucketAxis, Btn, Chip, KpiGroup, Panel, PanelGrid, PageHeader, RowList, SectionTitle, Segmented, Select, Stack, TimeAxis } from "./primitives";
@@ -96,11 +97,23 @@ function downloadFile(name: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-function exportTxCsv(name: string, txs: Tx[], categories: Category[], accounts: Account[]) {
-  const head = ["Fecha", "Concepto", "Cuenta", "Categoría", "Subcategoría", "Importe (EUR)"];
+function exportTxCsv(name: string, txs: Tx[], categories: Category[], accounts: Account[], allTxs: Tx[] = txs) {
+  const head = ["Fecha", "Concepto", "Cuenta", "Cuenta destino", "Categoría", "Subcategoría", "Importe (EUR)", "Saldo resultante"];
+  const balances = runningBalances(accounts, allTxs);
   const lines = txs.map((t) => {
     const cat = categories.find((c) => c.id === t.categoryId);
-    return [t.date, t.concept, accounts.find((a) => a.id === t.accountId)?.name ?? "", cat?.name ?? "Traspaso", cat?.subcategories.find((s) => s.id === t.subcategoryId)?.name ?? "", t.amount.toFixed(2).replace(".", ",")];
+    const ends = isTransfer(t) ? transferEndpoints(t, allTxs, accounts) : null;
+    const balance = balances.get(t.id);
+    return [
+      t.date,
+      t.concept,
+      accounts.find((a) => a.id === t.accountId)?.name ?? "",
+      ends ? `${ends.from?.name ?? ""} → ${ends.to?.name ?? ""}` : "",
+      cat?.name ?? "Traspaso",
+      cat?.subcategories.find((s) => s.id === t.subcategoryId)?.name ?? "",
+      t.amount.toFixed(2).replace(".", ","),
+      typeof balance === "number" ? balance.toFixed(2).replace(".", ",") : "",
+    ];
   });
   const csv = [head, ...lines].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\n");
   downloadFile(name, "\ufeff" + csv, "text/csv;charset=utf-8");
@@ -137,27 +150,54 @@ export function TxList({
   /** La lista ya pertenece a una categoría: no se muestra el filtro de categoría */
   fixedCategory?: boolean;
 }) {
-  const { categories, accounts, openModal } = usePreview();
+  const { categories, accounts, transactions: allTxs, openModal } = usePreview();
   const [kind, setKind] = useState<TxKind>("todos");
   const [catId, setCatId] = useState<number | "todas">("todas");
   const presentCats = useMemo(() => categories.filter((c) => c.id !== 0 && txs.some((t) => t.categoryId === c.id)), [categories, txs]);
-  const filtered = txs.filter((t) => (kind === "todos" || kindOf(t) === kind) && (catId === "todas" || t.categoryId === catId));
+
+  /* Un traspaso son dos apuntes: si la tabla contiene las dos patas, se muestra
+     sólo la salida (la fila ya indica origen → destino). */
+  const visible = useMemo(() => {
+    const ids = new Set(txs.map((t) => t.id));
+    return txs.filter((t) => {
+      if (!isTransfer(t) || t.amount < 0) return true;
+      const pair = transferEndpoints(t, txs, accounts).pairId;
+      return pair === undefined || !ids.has(pair);
+    });
+  }, [txs, accounts]);
+
+  const filtered = visible.filter((t) => (kind === "todos" || kindOf(t) === kind) && (catId === "todas" || t.categoryId === catId));
   const shown = limit ? filtered.slice(0, limit) : filtered;
+
+  /* Saldo resultante: sólo tiene sentido cuando toda la lista es de una cuenta. */
+  const balances = useMemo(() => runningBalances(accounts, allTxs), [accounts, allTxs]);
+  const oneAccount = singleAccount(shown);
+  const balanceLabel = oneAccount ? "saldo" : undefined;
+
   const rows = shown.map((tx) => {
     const cat = categories.find((c) => c.id === tx.categoryId);
     const subc = cat?.subcategories.find((s) => s.id === tx.subcategoryId);
     const acc = accounts.find((a) => a.id === tx.accountId);
+    const transfer = isTransfer(tx);
+    const ends = transfer ? transferEndpoints(tx, allTxs, accounts) : null;
+    const transferName = transfer ? `${ends?.from?.name ?? "—"} → ${ends?.to?.name ?? "—"}` : "";
+    const balance = oneAccount ? balances.get(tx.id) : undefined;
     return {
       id: tx.id,
-      icon: catIcon(cat),
-      colorIdx: tx.amount >= 0 ? 3 : cat?.colorIdx ?? 5,
-      title: tx.concept,
-      sub: `${formatDate(tx.date)} · ${cat ? `${cat.name} › ${subc?.name ?? ""}` : "Traspaso"}`,
-      meta: showAccount ? acc?.name : undefined,
+      icon: transfer ? <ArrowLeftRight className="h-4 w-4" /> : catIcon(cat),
+      colorIdx: transfer ? (tx.amount >= 0 ? 1 : 10) : tx.amount >= 0 ? 3 : cat?.colorIdx ?? 5,
+      title: transfer ? "Traspaso entre cuentas" : tx.concept,
+      sub: transfer
+        ? `${formatDate(tx.date)}${ends?.from && ends?.to ? ` · ${transferName}` : ""}`
+        : `${formatDate(tx.date)} · ${cat ? `${cat.name} › ${subc?.name ?? ""}` : "Sin categoría"}`,
+      /* En los traspasos el par origen → destino ya aparece en la línea de detalle */
+      meta: showAccount && !transfer ? acc?.name : undefined,
       value: formatSigned(tx.amount),
       valueTone: (tx.amount >= 0 ? "pos" : "text") as "pos" | "text",
       sub2: tx.tags?.[0] ? `#${tx.tags[0]}` : undefined,
       sub2Tone: "muted" as const,
+      balance: typeof balance === "number" ? formatEUR(balance) : undefined,
+      balanceLabel,
       extra: (
         <button
           type="button"
@@ -191,9 +231,10 @@ export function TxList({
               </Select>
             </div>
           )}
-          <span className="pv-faint ml-auto text-[11px]">{filtered.length} de {txs.length}</span>
+          <span className="pv-faint ml-auto text-[11px]">{filtered.length} de {visible.length}</span>
         </div>
       )}
+      {oneAccount && <p className="pv-faint text-[10.5px]" style={{ padding: "0 var(--pad) 6px" }}>El saldo bajo cada importe es el de la cuenta después de ese movimiento.</p>}
       <RowList items={rows} empty={txs.length ? "Ningún movimiento coincide con los filtros" : "Sin movimientos en este periodo"} />
     </>
   );
@@ -387,7 +428,7 @@ function Tinted({ color, children }: { color: ColorRef; children: ReactNode }) {
 const CARD_H = 156;
 const CARD_STRIP = 84;
 
-export type CardKey = "hielo" | "cristal" | "mate" | "neon" | "aurora" | "solido";
+export type CardKey = CardStyleKey;
 export const CARD_STYLES: { id: CardKey; label: string; note: string }[] = [
   { id: "hielo", label: "Hielo", note: "Vidrio escarchado y muy translúcido" },
   { id: "cristal", label: "Cristal", note: "Tinte de color transparente con desenfoque" },
@@ -558,7 +599,7 @@ function CardStylePicker({ value, onChange }: { value: CardKey; onChange: (v: Ca
 }
 
 function AccountsList() {
-  const { arch, isMobile } = useArch();
+  const { arch, isMobile, cfg, patchConfig } = useArch();
   const { accounts, openModal, period, setPeriod } = usePreview();
   const openAccount = useOpenAccount();
   const series = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, accountSeries(a)])) as Record<number, number[]>, [accounts]);
@@ -580,7 +621,10 @@ function AccountsList() {
   const totalDelta = accounts.reduce((s, a) => s + delta(a), 0);
   const cs = arch.chartStyle;
   const cards = arch.list === "avatars";
-  const [cardStyle, setCardStyle] = useState<CardKey>("hielo");
+  /* El estilo de tarjeta vive en la configuración de diseño: se guarda en el
+     servidor y se recuerda al cambiar de pestaña o recargar. */
+  const cardStyle = (cfg.cardStyleKey ?? "hielo") as CardKey;
+  const setCardStyle = (v: CardKey) => patchConfig?.({ cardStyleKey: v });
 
   const kpis = [
     { label: "Total cuentas", value: formatEUR(total), delta: formatPct((totalDelta / Math.max(total - totalDelta, 1)) * 100), trend: trend(totalDelta), icon: <Wallet className="h-4 w-4" />, colorIdx: 0, pct: 100 },
@@ -727,7 +771,7 @@ function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedde
       </Panel>
       <Panel pad={false}>
         <div style={{ padding: "var(--pad)" }}>
-          <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
+          <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
         </div>
         <TxList txs={txs} limit={isMobile ? 8 : 14} showAccount={false} />
       </Panel>
@@ -840,7 +884,7 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
       </PanelGrid>
       <Panel pad={false}>
         <div style={{ padding: "var(--pad)" }}>
-          <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
+          <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
         </div>
         <TxList txs={txs} limit={isMobile ? 8 : 14} showAccount={false} />
       </Panel>

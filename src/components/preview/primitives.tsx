@@ -613,6 +613,10 @@ export interface RowItem {
   valueTone?: "pos" | "neg" | "text";
   sub2?: string;
   sub2Tone?: "pos" | "neg" | "muted";
+  /** Saldo de la cuenta después de este movimiento */
+  balance?: string;
+  /** Texto que acompaña al saldo (por ejemplo «saldo») */
+  balanceLabel?: string;
   extra?: ReactNode;
   onClick?: () => void;
 }
@@ -638,6 +642,7 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
             <div className="shrink-0 text-right">
               <p className="pv-num text-[13px] font-bold" style={{ color: tone(it.valueTone) }}>{it.value}</p>
               {it.sub2 && <p className="pv-num text-[11px] font-semibold" style={{ color: tone(it.sub2Tone) }}>{it.sub2}</p>}
+              {it.balance && <p className="pv-num pv-faint text-[10.5px]">{it.balanceLabel ?? "saldo"} {it.balance}</p>}
             </div>
           </li>
         ))}
@@ -656,7 +661,7 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
               <span className="pv-num shrink-0 text-[12.5px] font-semibold" style={{ color: tone(it.valueTone) }}>{it.value}</span>
               {it.extra}
             </div>
-            <p className="pv-faint truncate text-[10.5px]">{it.sub}{it.meta && !isMobile ? ` · ${it.meta}` : ""}{it.sub2 ? ` · ${it.sub2}` : ""}</p>
+            <p className="pv-faint truncate text-[10.5px]">{it.sub}{it.meta && !isMobile ? ` · ${it.meta}` : ""}{it.sub2 ? ` · ${it.sub2}` : ""}{it.balance ? ` · ${it.balanceLabel ?? "saldo"} ${it.balance}` : ""}</p>
           </li>
         ))}
       </ul>
@@ -677,6 +682,7 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
             <div className="shrink-0 text-right">
               <p className="pv-num text-[13px] font-bold" style={{ color: tone(it.valueTone) }}>{it.value}</p>
               {it.sub2 && <p className="pv-num text-[11px] font-semibold" style={{ color: tone(it.sub2Tone) }}>{it.sub2}</p>}
+              {it.balance && <p className="pv-num pv-faint text-[10.5px]">{it.balanceLabel ?? "saldo"} {it.balance}</p>}
             </div>
           </li>
         ))}
@@ -695,6 +701,7 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
               {!isMobile && <td className="pv-muted px-2 py-1 text-[11px]">{it.sub}</td>}
               {!isMobile && <td className="pv-faint px-2 py-1 text-[11px]">{it.meta}</td>}
               <td className="pv-num px-3 py-1 text-right text-[12px] font-semibold" style={{ color: tone(it.valueTone) }}>{it.value}</td>
+              {it.balance && <td className="pv-num pv-faint px-3 py-1 text-right text-[11px]" style={{ width: 110 }}>{it.balance}</td>}
               {it.sub2 && <td className="pv-num px-3 py-1 text-right text-[11px]" style={{ color: tone(it.sub2Tone), width: 90 }}>{it.sub2}</td>}
               {it.extra && <td className="px-2 py-1 text-right">{it.extra}</td>}
             </tr>
@@ -714,7 +721,10 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
               {it.sub && <p className="pv-muted truncate text-[12px] italic">{it.sub}{it.meta ? ` — ${it.meta}` : ""}</p>}
             </div>
             {!isMobile && <span className="pv-faint text-right text-[12px]">{it.sub2 ?? ""}</span>}
-            <span className="pv-num text-right text-[14px]" style={{ color: tone(it.valueTone) }}>{it.value}</span>
+            <span className="pv-num text-right text-[14px]" style={{ color: tone(it.valueTone) }}>
+              {it.value}
+              {it.balance && <span className="pv-faint block text-[11px]">{it.balanceLabel ?? "saldo"} {it.balance}</span>}
+            </span>
           </li>
         ))}
       </ul>
@@ -732,6 +742,7 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
               <p className="pv-faint truncate text-[11px]">{it.sub}</p>
               <p className="pv-num mt-1 text-[14px] font-bold" style={{ color: tone(it.valueTone) }}>{it.value}</p>
               {it.sub2 && <p className="pv-num text-[11px] font-semibold" style={{ color: tone(it.sub2Tone) }}>{it.sub2}</p>}
+              {it.balance && <p className="pv-num pv-faint text-[10.5px]">{it.balanceLabel ?? "saldo"} {it.balance}</p>}
             </div>
             {it.extra}
           </button>
@@ -754,6 +765,7 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
             <div className="shrink-0 text-right">
               <p className="pv-num text-[14px] font-black" style={{ color: tone(it.valueTone) }}>{it.value}</p>
               {it.sub2 && <p className="pv-num text-[11px] font-bold" style={{ color: tone(it.sub2Tone) }}>{it.sub2}</p>}
+              {it.balance && <p className="pv-num pv-muted text-[10.5px]">{it.balanceLabel ?? "saldo"} {it.balance}</p>}
             </div>
             {it.onClick && <ChevronRight className="h-4 w-4 shrink-0" style={{ color: "var(--text)" }} />}
           </li>
@@ -777,6 +789,7 @@ export function RowList({ items, empty = "Sin elementos" }: { items: RowItem[]; 
           <div className="shrink-0 text-right">
             <p className="pv-num text-[13px] font-bold" style={{ color: tone(it.valueTone) }}>{it.value}</p>
             {it.sub2 && <p className="pv-num text-[11px] font-semibold" style={{ color: tone(it.sub2Tone) }}>{it.sub2}</p>}
+            {it.balance && <p className="pv-num pv-faint text-[10.5px]">{it.balanceLabel ?? "saldo"} {it.balance}</p>}
           </div>
           {it.onClick && avatars && <ChevronRight className="h-4 w-4 shrink-0" style={{ color: "var(--faint)" }} />}
         </li>

@@ -17,6 +17,7 @@ import {
 } from "@/lib/mock";
 import { setTodayReference } from "@/lib/series";
 import { shortDate, stablePrice, todayIso, withPrice } from "@/lib/market";
+import { demoteCategory as demoteInTree, moveItem, moveSubcategory as moveSubInTree, promoteSubcategory as promoteInTree, remapTransaction } from "@/lib/category-tree";
 import type { ArchetypeDef, DesignConfig, DonutKey } from "@/lib/themes";
 import { getArchetype } from "@/lib/themes";
 
@@ -50,7 +51,8 @@ export type ModalKind =
   | { kind: "paletteEditor"; key?: string }
   | { kind: "search" }
   | { kind: "notifications" }
-  | { kind: "confirmClear" };
+  | { kind: "confirmClear" }
+  | { kind: "organizeCategories"; categoryId?: number };
 
 const DEFAULT_SOURCES: Record<string, boolean> = { "Yahoo Finance": true, CoinGecko: true, "Alpha Vantage": false, Morningstar: true };
 
@@ -95,6 +97,16 @@ interface PreviewState {
   addHolding: (h: NewHolding) => void;
   addOperation: (productId: number, op: Omit<Operation, "id">) => void;
   addCategory: (c: Omit<Category, "id" | "subcategories">, subs: string[]) => void;
+  /** Mueve una categoría en la lista (direction -1 arriba, +1 abajo). */
+  reorderCategory: (id: number, direction: -1 | 1) => void;
+  /** Mueve una subcategoría dentro de su categoría. */
+  reorderSubcategory: (categoryId: number, subId: number, direction: -1 | 1) => void;
+  /** Convierte una subcategoría en categoría propia (sus movimientos la siguen). */
+  promoteSubcategory: (categoryId: number, subId: number) => void;
+  /** Convierte una categoría en subcategoría de otra (sus movimientos se mueven con ella). */
+  demoteCategory: (categoryId: number, targetCategoryId: number) => void;
+  /** Cambia una subcategoría de categoría padre. */
+  moveSubcategory: (categoryId: number, subId: number, targetCategoryId: number) => void;
   addSubcategory: (parentId: number, name: string, extra?: { icon?: string; colorIdx?: import("@/lib/colors").ColorRef }) => void;
   updateTransaction: (id: number, tx: Omit<Tx, "id">) => void;
   updateTransfer: (txId: number, v: { from: number; to: number; amount: number; date: string; concept: string }) => void;
@@ -429,6 +441,65 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
     },
     [flash],
   );
+  /* ---------------------- organización de categorías ---------------------- */
+
+  const reorderCategory = useCallback(
+    (id: number, direction: -1 | 1) => {
+      setCategories((list) => {
+        const index = list.findIndex((c) => c.id === id);
+        return index < 0 ? list : moveItem(list, index, direction);
+      });
+      flash(direction < 0 ? "Categoría movida hacia arriba" : "Categoría movida hacia abajo");
+    },
+    [flash],
+  );
+
+  const reorderSubcategory = useCallback(
+    (categoryId: number, subId: number, direction: -1 | 1) => {
+      setCategories((list) =>
+        list.map((c) => {
+          if (c.id !== categoryId) return c;
+          const index = c.subcategories.findIndex((s) => s.id === subId);
+          return index < 0 ? c : { ...c, subcategories: moveItem(c.subcategories, index, direction) };
+        }),
+      );
+      flash("Subcategoría reordenada");
+    },
+    [flash],
+  );
+
+  const promoteSubcategory = useCallback(
+    (categoryId: number, subId: number) => {
+      setCategories((list) => {
+        const change = promoteInTree(list, categoryId, subId);
+        if (change.remap) setTransactions((txs) => txs.map((t) => remapTransaction(t, change.remap)));
+        return change.categories;
+      });
+      flash("Subcategoría convertida en categoría · sus movimientos la acompañan");
+    },
+    [flash],
+  );
+
+  const demoteCategory = useCallback(
+    (categoryId: number, targetCategoryId: number) => {
+      setCategories((list) => {
+        const change = demoteInTree(list, categoryId, targetCategoryId);
+        if (change.remap) setTransactions((txs) => txs.map((t) => remapTransaction(t, change.remap)));
+        return change.categories;
+      });
+      flash("Categoría convertida en subcategoría · movimientos conservados");
+    },
+    [flash],
+  );
+
+  const moveSubcategory = useCallback(
+    (categoryId: number, subId: number, targetCategoryId: number) => {
+      setCategories((list) => moveSubInTree(list, categoryId, subId, targetCategoryId));
+      flash("Subcategoría movida de categoría");
+    },
+    [flash],
+  );
+
   const updateCategory = useCallback(
     (id: number, patch: Partial<Category>) => {
       setCategories((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
@@ -586,11 +657,11 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
     () => ({
       route, go, back, modal, openModal, closeModal, closeAllModals, period, setPeriod, toast, flash, saveState, lastSavedAt,
       accounts, categories, holdings, transactions, sources, toggleSource,
-      addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory,
+      addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory,
       updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation,
       deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices,
     }),
-    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
+    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
