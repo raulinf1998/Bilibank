@@ -16,6 +16,7 @@ import {
   type Tx,
 } from "@/lib/mock";
 import { setTodayReference } from "@/lib/series";
+import { shortDate, stablePrice, todayIso, withPrice } from "@/lib/market";
 import type { ArchetypeDef, DesignConfig, DonutKey } from "@/lib/themes";
 import { getArchetype } from "@/lib/themes";
 
@@ -85,7 +86,8 @@ interface PreviewState {
   transactions: Tx[];
   sources: Record<string, boolean>;
   toggleSource: (name: string) => void;
-  refreshPrices: () => void;
+  /** Actualiza precios: estables por día y, si hay red, con datos de mercado reales. */
+  refreshPrices: () => Promise<void>;
 
   addTransaction: (tx: Omit<Tx, "id">) => void;
   addTransfer: (from: number, to: number, amount: number, date: string, concept: string) => void;
@@ -103,6 +105,10 @@ interface PreviewState {
   updateOperation: (productId: number, opId: number, op: Omit<Operation, "id">) => void;
   deleteOperation: (productId: number, opId: number) => void;
   deleteTransaction: (id: number) => void;
+  /** Borra la cuenta y sus movimientos; los productos deben moverse antes. */
+  deleteAccount: (id: number) => boolean;
+  /** Archiva o recupera una cuenta conservando todos sus datos. */
+  setAccountArchived: (id: number, archived: boolean) => void;
   clearTransactions: () => void;
   resetData: () => void;
   exportData: () => string;
@@ -458,6 +464,31 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
     [transactions, flash],
   );
 
+  const setAccountArchived = useCallback(
+    (id: number, archived: boolean) => {
+      setAccounts((list) => list.map((a) => (a.id === id ? { ...a, archived: archived || undefined } : a)));
+      flash(archived ? "Cuenta archivada · sus movimientos siguen contando en las estadísticas" : "Cuenta recuperada");
+    },
+    [flash],
+  );
+
+  const deleteAccount = useCallback(
+    (id: number) => {
+      const products = holdings.filter((h) => h.accountId === id);
+      if (products.length) {
+        flash(`!Mueve antes los ${products.length} productos de esta cuenta`);
+        return false;
+      }
+      const removed = transactions.filter((t) => t.accountId === id).length;
+      setAccounts((list) => list.filter((a) => a.id !== id));
+      setTransactions((list) => list.filter((t) => t.accountId !== id));
+      setRoute((r) => (r.accountId === id ? { page: "cuentas" } : r));
+      flash(`Cuenta eliminada junto con ${removed} movimientos`);
+      return true;
+    },
+    [holdings, transactions, flash],
+  );
+
   const clearTransactions = useCallback(() => {
     setTransactions([]);
     flash("Movimientos borrados · cuentas y productos conservados");
@@ -509,23 +540,45 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
 
   const toggleSource = useCallback((name: string) => setSources((s) => ({ ...s, [name]: !s[name] })), []);
 
-  const refreshPrices = useCallback(() => {
-    setHoldings((list) =>
-      list.map((h) => {
-        const drift = (Math.random() - 0.5) * 0.04;
-        const price = Math.max(0.01, Math.round(h.price * (1 + drift) * 100) / 100);
-        const prices = [...h.prices.slice(1), price];
-        return {
-          ...h,
-          price,
-          change1d: Math.round(drift * 10000) / 100,
-          prices,
-          spark: prices.filter((_, i) => i % 2 === 1),
-        };
-      }),
-    );
-    flash("Precios actualizados");
-  }, [flash]);
+  /**
+   * Actualizar precios ya no es aleatorio acumulativo:
+   *  1. Se aplica un precio determinista para el día de hoy (repetir el clic
+   *     devuelve el mismo valor, porque se calcula desde `priceBase`).
+   *  2. Se intenta traer precios reales de /api/prices; si llegan, sustituyen
+   *     a los simulados. Si no hay red, se queda la simulación estable.
+   */
+  const refreshPrices = useCallback(async () => {
+    const today = todayIso();
+    const snapshot = holdings.map((h) => ({ id: h.id, ticker: h.ticker, isin: h.isin, base: h.priceBase ?? h.price }));
+
+    setHoldings((list) => list.map((h) => withPrice(h, h.priceBase ?? h.price, stablePrice(h.priceBase ?? h.price, h.ticker, today), today)));
+    flash(`Precios actualizados · ${shortDate(today)}`);
+
+    if (!snapshot.length) return;
+    try {
+      const response = await fetch("/api/prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: snapshot }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) throw new Error("sin respuesta");
+      const payload = (await response.json()) as { prices?: Record<string, number> };
+      const live = Object.entries(payload.prices ?? {}).filter(([, price]) => typeof price === "number" && price > 0);
+      if (!live.length) {
+        flash("Las fuentes no tienen precios para estos productos: se mantiene la simulación");
+        return;
+      }
+      const byId = new Map(live.map(([id, price]) => [Number(id), price]));
+      setHoldings((list) => list.map((h) => {
+        const price = byId.get(h.id);
+        return price ? withPrice(h, h.priceBase ?? h.price, price, today) : h;
+      }));
+      flash(`Precios de mercado: ${live.length} de ${snapshot.length} productos`);
+    } catch {
+      flash("Sin conexión con las fuentes: se mantiene la simulación del día");
+    }
+  }, [holdings, flash]);
 
   const modal = stack.length ? stack[stack.length - 1] : null;
 
@@ -535,9 +588,9 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       accounts, categories, holdings, transactions, sources, toggleSource,
       addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory,
       updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation,
-      deleteTransaction, clearTransactions, resetData, exportData, importData, refreshPrices,
+      deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices,
     }),
-    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteTransaction, clearTransactions, resetData, exportData, importData, refreshPrices],
+    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

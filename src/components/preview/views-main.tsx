@@ -14,6 +14,7 @@ import type { ChartStyleKey } from "@/lib/themes";
 import { chartColor, onColor, type ColorRef } from "@/lib/colors";
 import { FULL_DAYS, TODAY, addDays, periodRange, bucketLabels, changePct, expandSeries, flowsFor, inPeriod, periodDays, periodLabel, periodMonths, periodShort, periodStart, sampleAtBuckets, windowSeries } from "@/lib/series";
 import { formatEUR, formatEUR0, formatNum, formatPct, formatDate, formatFullDate, formatSigned } from "@/lib/format";
+import { shortDate, todayIso } from "@/lib/market";
 import { CompareBars, Donut, HBars, MultiLines, Sparkline, StackedArea, StackedBars, TrendChart, downsample } from "./charts";
 import { HoverLayer, TipBody, TipRow } from "./hover";
 import { BucketAxis, Btn, Chip, KpiGroup, Panel, PanelGrid, PageHeader, RowList, SectionTitle, Segmented, Select, Stack, TimeAxis } from "./primitives";
@@ -567,10 +568,14 @@ function AccountsList() {
     return w[w.length - 1] - w[0];
   };
 
-  const current = accounts.filter((a) => a.kind === "corriente");
-  const invest = accounts.filter((a) => a.kind === "inversion");
-  const totalCurrent = current.reduce((s, a) => s + a.balance, 0);
-  const totalInvest = invest.reduce((s, a) => s + a.balance, 0);
+  /* Las cuentas archivadas siguen sumando en los totales y las estadísticas,
+     pero no se listan junto a las activas. */
+  const active = accounts.filter((a) => !a.archived);
+  const archived = accounts.filter((a) => a.archived);
+  const current = active.filter((a) => a.kind === "corriente");
+  const invest = active.filter((a) => a.kind === "inversion");
+  const totalCurrent = accounts.filter((a) => a.kind === "corriente").reduce((s, a) => s + a.balance, 0);
+  const totalInvest = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + a.balance, 0);
   const total = totalCurrent + totalInvest;
   const totalDelta = accounts.reduce((s, a) => s + delta(a), 0);
   const cs = arch.chartStyle;
@@ -584,7 +589,7 @@ function AccountsList() {
     { label: `Variación · ${periodShort(period)}`, value: formatSigned(totalDelta), delta: formatPct((totalDelta / Math.max(total - totalDelta, 1)) * 100), trend: trend(totalDelta), icon: <TrendingUp className="h-4 w-4" />, colorIdx: 3, pct: 62 },
   ];
 
-  const group = (title: string, items: Account[], sum: number) => (
+  const group = (title: string, items: Account[], sum: number, archivedGroup = false) => (
     <Panel pad={false}>
       <div style={{ padding: "var(--pad)" }}>
         <SectionTitle sub={`${items.length} cuentas · ${formatEUR(sum)}`}>{title}</SectionTitle>
@@ -600,7 +605,7 @@ function AccountsList() {
               icon: a.kind === "inversion" ? <Briefcase className="h-4 w-4" /> : a.name === "Efectivo" ? <Coins className="h-4 w-4" /> : <Landmark className="h-4 w-4" />,
               colorIdx: a.colorIdx,
               title: a.name,
-              sub: KIND_LABEL[a.kind],
+              sub: archivedGroup ? `${KIND_LABEL[a.kind]} · archivada` : KIND_LABEL[a.kind],
               value: formatEUR(a.balance),
               sub2: formatSigned(d),
               sub2Tone: (d >= 0 ? "pos" : "neg") as "pos" | "neg",
@@ -615,7 +620,7 @@ function AccountsList() {
 
   return (
     <Stack>
-      <PageHeader kicker={`${accounts.length} cuentas activas · variación ${periodShort(period)}`} title="Cuentas" action={
+      <PageHeader kicker={`${active.length} cuentas activas${archived.length ? ` · ${archived.length} archivadas` : ""} · variación ${periodShort(period)}`} title="Cuentas" action={
         <>
           <Segmented options={PERIODS} value={period} onChange={setPeriod} />
           <Btn variant="ghost" icon={<ArrowLeftRight className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "transfer" })}>Traspaso</Btn>
@@ -628,6 +633,11 @@ function AccountsList() {
         {group("Cuentas corrientes", current, totalCurrent)}
         {group("Cuentas de inversión", invest, totalInvest)}
       </PanelGrid>
+      {archived.length > 0 && (
+        <div className="mt-4">
+          {group("Archivadas", archived, archived.reduce((s, a) => s + a.balance, 0), true)}
+        </div>
+      )}
     </Stack>
   );
 }
@@ -683,7 +693,7 @@ function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedde
   return (
     <Tinted color={acc.colorIdx}>
     <Stack>
-      {embedded ? <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div> : <PageHeader onBack={back} kicker="Cuenta corriente" title={acc.name} action={actions} />}
+      {embedded ? <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div> : <PageHeader onBack={back} kicker={acc.archived ? "Cuenta corriente · archivada" : "Cuenta corriente"} title={acc.name} action={actions} />}
       <PeriodBar />
       <KpiGroup items={kpis} />
       <PanelGrid cols="grid-cols-1 xl:grid-cols-3">
@@ -1095,15 +1105,19 @@ function PortfolioList() {
   const [selProducts, setSelProducts] = useState<number[] | null>(null);
   const toggleAccount = (id: number) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const [refreshing, setRefreshing] = useState(false);
-  const [priceNote, setPriceNote] = useState("hace 4 min");
-  const handleRefresh = () => {
+  const [priceNote, setPriceNote] = useState(() => {
+    const last = holdings.map((h) => h.pricesUpdatedOn).filter(Boolean).sort().pop();
+    return last ? shortDate(last) : "sin actualizar";
+  });
+  const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
-    setTimeout(() => {
-      refreshPrices();
+    try {
+      await refreshPrices();
+      setPriceNote(shortDate(todayIso()));
+    } finally {
       setRefreshing(false);
-      setPriceNote("ahora mismo");
-    }, 900);
+    }
   };
 
   const scope = picked.length ? holdings.filter((h) => picked.includes(h.accountId)) : holdings;

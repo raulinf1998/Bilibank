@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDownRight, ArrowLeftRight, ArrowUpRight, Bell, Briefcase, Check, Landmark, Pencil, Plus, Search, StickyNote, Tag, Trash2, TriangleAlert,
+  ArrowDownRight, ArrowLeftRight, ArrowUpRight, Bell, Briefcase, Check, Download, Landmark, LoaderCircle, Pencil, Plus, Search, StickyNote, Tag, Trash2, TriangleAlert, X,
 } from "lucide-react";
 import type { Account, AccountKind, Category, Holding, Operation, Tx } from "@/lib/mock";
 import { HOLDING_CATEGORIES, type HoldingCategory } from "@/lib/mock";
@@ -11,6 +11,7 @@ import { chartColor, onColor, type ColorRef } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
 import { KIND_LABEL, PERIODS } from "@/lib/mock";
 import { inPeriod, periodLabel } from "@/lib/series";
+import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown } from "@/lib/market";
 import { formatEUR, formatEUR0, formatFullDate, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, Segmented, Select } from "./primitives";
 import { DateField } from "./datefield";
@@ -456,8 +457,8 @@ function EditMovementModal({ tx, onClose }: { tx: Tx; onClose: () => void }) {
         </div>
         <Field label="Cuenta">
           <Select value={accountId} onChange={(e) => setAccountId(Number(e.target.value))}>
-            <optgroup label="Cuentas corrientes">{accounts.filter((a) => a.kind === "corriente").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</optgroup>
-            <optgroup label="Cuentas de inversión">{accounts.filter((a) => a.kind === "inversion").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</optgroup>
+            <optgroup label="Cuentas corrientes">{accounts.filter((a) => a.kind === "corriente" && !a.archived).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</optgroup>
+            <optgroup label="Cuentas de inversión">{accounts.filter((a) => a.kind === "inversion" && !a.archived).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</optgroup>
           </Select>
         </Field>
         <div className="grid grid-cols-2 gap-3">
@@ -633,15 +634,26 @@ function AccountKindPicker({ value, onChange }: { value: AccountKind; onChange: 
 }
 
 function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: () => void }) {
-  const { accounts, holdings, updateAccount } = usePreview();
+  const { accounts, holdings, transactions, updateAccount, setAccountArchived, deleteAccount } = usePreview();
   const acc = accounts.find((a) => a.id === accountId);
   const [name, setName] = useState(acc?.name ?? "");
   const [kind, setKind] = useState<AccountKind>(acc?.kind ?? "corriente");
   const [color, setColor] = useState<ColorRef>(acc?.colorIdx ?? 0);
+  const [archived, setArchived] = useState(Boolean(acc?.archived));
+  const [confirmDelete, setConfirmDelete] = useState(false);
   if (!acc) return null;
+
   const prods = holdings.filter((h) => h.accountId === acc.id);
+  const txCount = transactions.filter((t) => t.accountId === acc.id).length;
   const blocked = kind === "corriente" && prods.length > 0;
   const changed = kind !== acc.kind;
+
+  const save = () => {
+    updateAccount(acc.id, { name: name.trim(), kind, colorIdx: color });
+    if (archived !== Boolean(acc.archived)) setAccountArchived(acc.id, archived);
+    onClose();
+  };
+
   return (
     <Modal
       title="Editar cuenta"
@@ -650,7 +662,7 @@ function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: 
       footer={
         <>
           <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
-          <Btn disabled={!name.trim() || blocked} onClick={() => { updateAccount(acc.id, { name: name.trim(), kind, colorIdx: color }); onClose(); }}>{changed ? "Guardar y cambiar de tipo" : "Guardar cambios"}</Btn>
+          <Btn disabled={!name.trim() || blocked} onClick={save}>{changed ? "Guardar y cambiar de tipo" : "Guardar cambios"}</Btn>
         </>
       }
     >
@@ -669,6 +681,64 @@ function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: 
           </p>
         )}
         <Field label="Color de la cuenta"><ColorPicker value={color} onChange={setColor} /></Field>
+
+        <div className="pv-divider" />
+
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>Archivar cuenta</p>
+            <p className="pv-faint text-[11px] leading-snug">
+              Deja de aparecer en las listas y al registrar movimientos, pero conserva su saldo, sus {txCount} movimientos
+              y sigue contando en las estadísticas. Puedes recuperarla cuando quieras.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={archived}
+            aria-label="Archivar cuenta"
+            onClick={() => setArchived((v) => !v)}
+            className="mt-1 shrink-0 px-3 py-1.5 text-[11.5px] font-semibold"
+            style={{
+              borderRadius: 999,
+              border: `1px solid ${archived ? "var(--accent)" : "var(--border-strong)"}`,
+              background: archived ? "var(--accent-soft)" : "var(--surface-2)",
+              color: archived ? "var(--accent)" : "var(--muted)",
+            }}
+          >
+            {archived ? "Archivada" : "Activa"}
+          </button>
+        </div>
+
+        <div className="pv-divider" />
+
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>Eliminar cuenta</p>
+            <p className="pv-faint text-[11px] leading-snug">
+              {prods.length
+                ? `Tiene ${prods.length} ${prods.length === 1 ? "producto" : "productos"}: muévelos a otra cuenta antes de eliminarla.`
+                : `Se borrarán también sus ${txCount} movimientos. Si solo quieres dejar de verla, archívala.`}
+            </p>
+          </div>
+          {confirmDelete ? (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Btn variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>No</Btn>
+              <Btn
+                variant="danger"
+                size="sm"
+                disabled={prods.length > 0}
+                onClick={() => { if (deleteAccount(acc.id)) onClose(); }}
+              >
+                Sí, eliminar
+              </Btn>
+            </div>
+          ) : (
+            <Btn variant="danger" size="sm" icon={<Trash2 className="h-3 w-3" />} disabled={prods.length > 0} onClick={() => setConfirmDelete(true)}>
+              Eliminar
+            </Btn>
+          )}
+        </div>
       </div>
     </Modal>
   );
@@ -776,6 +846,71 @@ function NewSubcategoryModal({ parent, onClose }: { parent: Category; onClose: (
   );
 }
 
+function BreakdownEditor({
+  label,
+  hint,
+  rows,
+  onChange,
+  placeholder,
+  max,
+}: {
+  label: string;
+  hint: string;
+  rows: [string, number][];
+  onChange: (rows: [string, number][]) => void;
+  placeholder: string;
+  max?: number;
+}) {
+  const total = breakdownTotal(rows);
+  const update = (index: number, patch: Partial<{ name: string; pct: number }>) =>
+    onChange(rows.map((row, i) => (i === index ? [patch.name ?? row[0], patch.pct ?? row[1]] : row)) as [string, number][]);
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-semibold" style={{ color: "var(--text)" }}>{label}</span>
+        <span className="pv-num text-[11px] font-semibold" style={{ color: total > 100.5 ? "var(--neg)" : "var(--muted)" }}>{total.toFixed(1)} %</span>
+      </div>
+      <p className="pv-faint mb-2 text-[10.5px] leading-snug">{hint}</p>
+      <div className="flex flex-col gap-1.5">
+        {rows.map((row, i) => (
+          <div key={`${label}-${i}`} className="flex items-center gap-1.5">
+            <Input value={row[0]} placeholder={placeholder} onChange={(e) => update(i, { name: e.target.value })} />
+            <div className="w-[86px] shrink-0">
+              <Input
+                inputMode="decimal"
+                value={String(row[1]).replace(".", ",")}
+                onChange={(e) => update(i, { pct: Number(e.target.value.replace(",", ".")) || 0 })}
+                aria-label={`Porcentaje de ${row[0] || label}`}
+              />
+            </div>
+            <button
+              type="button"
+              aria-label="Quitar fila"
+              onClick={() => onChange(rows.filter((_, index) => index !== i) as [string, number][])}
+              className="grid h-8 w-8 shrink-0 place-items-center"
+              style={{ color: "var(--faint)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <Btn variant="ghost" size="sm" icon={<Plus className="h-3 w-3" />} onClick={() => onChange([...rows, ["", 0]] as [string, number][])} disabled={max ? rows.length >= max : false}>
+            Añadir
+          </Btn>
+          {rows.length > 0 && total !== 100 && (
+            <Btn variant="ghost" size="sm" onClick={() => onChange(normalizeBreakdown(rows))}>Ajustar a 100 %</Btn>
+          )}
+          {rows.length > 0 && (
+            <span className="ml-auto"><Btn variant="ghost" size="sm" onClick={() => onChange([])}>Vaciar</Btn></span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditProductModal({ productId, onClose }: { productId: number; onClose: () => void }) {
   const { holdings, accounts, updateHolding } = usePreview();
   const h = holdings.find((x) => x.id === productId);
@@ -786,9 +921,87 @@ function EditProductModal({ productId, onClose }: { productId: number; onClose: 
   const [category, setCategory] = useState<HoldingCategory>(h?.category ?? "Fondo indexado");
   const [source, setSource] = useState(h?.source ?? "Manual");
   const [color, setColor] = useState<ColorRef>(h?.colorIdx ?? 0);
+  const [sectors, setSectors] = useState<[string, number][]>(h?.sectors ?? []);
+  const [top, setTop] = useState<[string, number][]>(h?.top ?? []);
+  const [countries, setCountries] = useState<[string, number][]>(h?.countries ?? []);
+  const [feed, setFeed] = useState<{ status: "idle" | "loading" | "done" | "error"; message?: string }>({ status: "idle" });
+  const autoTried = useRef(false);
+  const holding = h;
+
+  const fetchProfile = async () => {
+    if (!holding) return;
+    setFeed({ status: "loading" });
+    try {
+      const response = await fetch("/api/market-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: [{ id: holding.id, ticker: ticker.trim(), isin: holding.isin, name }] }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const payload = (await response.json()) as {
+        profiles?: Record<string, { sectors: [string, number][]; top: [string, number][]; countries: [string, number][]; source: string } | null>;
+        message?: string;
+      };
+      const profile = payload.profiles?.[String(holding.id)];
+      if (!profile) {
+        setFeed({ status: "error", message: payload.message ?? "La fuente no tiene desglose de este producto. Puedes escribirlo a mano." });
+        return;
+      }
+      if (profile.sectors.length) setSectors(profile.sectors);
+      if (profile.top.length) setTop(profile.top);
+      if (profile.countries.length) setCountries(profile.countries);
+      setFeed({ status: "done", message: `Datos de ${profile.source}. Revísalos antes de guardar.` });
+    } catch {
+      setFeed({ status: "error", message: "No se pudo conectar con la fuente de datos. Introduce los valores a mano." });
+    }
+  };
+
+  /* Si el producto no tiene desglose (típico tras importar MoneyMatter), se
+     intenta traer de la fuente automáticamente al abrir la ficha. */
+  useEffect(() => {
+    if (!holding || autoTried.current) return;
+    autoTried.current = true;
+    if (!isPlaceholderBreakdown(holding.sectors) && !isPlaceholderBreakdown(holding.top)) return;
+    /* En un temporizador para no encadenar estado dentro del efecto. */
+    const timer = setTimeout(() => { void fetchProfile(); }, 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!h) return null;
+
   return (
-    <Modal title="Editar producto" sub={h.isin} onClose={onClose} width={560} footer={<><Btn variant="ghost" onClick={onClose}>Cancelar</Btn><Btn disabled={!name.trim() || !ticker.trim()} onClick={() => { updateHolding(h.id, { name: name.trim(), ticker: ticker.trim().toUpperCase(), nickname: nickname.trim() || ticker.trim().toUpperCase(), category, source, colorIdx: color, accountId }); onClose(); }}>Guardar cambios</Btn></>}>
+    <Modal
+      title="Editar producto"
+      sub={h.isin || h.ticker}
+      onClose={onClose}
+      width={620}
+      footer={
+        <>
+          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+          <Btn
+            disabled={!name.trim() || !ticker.trim()}
+            onClick={() => {
+              updateHolding(h.id, {
+                name: name.trim(),
+                ticker: ticker.trim().toUpperCase(),
+                nickname: nickname.trim() || ticker.trim().toUpperCase(),
+                category,
+                source,
+                colorIdx: color,
+                accountId,
+                sectors: normalizeBreakdown(sectors).length ? normalizeBreakdown(sectors) : [["Sin clasificar", 100]],
+                top: normalizeBreakdown(top).length ? normalizeBreakdown(top) : [["Sin desglose", 100]],
+                countries: normalizeBreakdown(countries).length ? normalizeBreakdown(countries) : [["Sin clasificar", 100]],
+              });
+            onClose();
+          }}
+          >
+            Guardar cambios
+          </Btn>
+        </>
+      }
+    >
       <div className="flex flex-col gap-3.5">
         <div className="grid grid-cols-[120px_1fr] gap-3">
           <Field label="Ticker"><Input value={ticker} onChange={(e) => setTicker(e.target.value)} autoFocus /></Field>
@@ -798,9 +1011,53 @@ function EditProductModal({ productId, onClose }: { productId: number; onClose: 
           <Field label="Apodo" hint="Nombre corto para tablas y gráficos"><Input value={nickname} maxLength={22} onChange={(e) => setNickname(e.target.value)} /></Field>
           <Field label="Categoría"><Select value={category} onChange={(e) => setCategory(e.target.value as HoldingCategory)}>{HOLDING_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</Select></Field>
         </div>
-        <Field label="Cuenta de inversión" hint="Mueve el producto a otra cuenta de inversión"><Select value={accountId} onChange={(e) => setAccountId(Number(e.target.value))}>{accounts.filter((a) => a.kind === "inversion").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></Field>
+        <Field label="Cuenta de inversión" hint="Mueve el producto a otra cuenta de inversión"><Select value={accountId} onChange={(e) => setAccountId(Number(e.target.value))}>{accounts.filter((a) => a.kind === "inversion" && !a.archived).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></Field>
         <Field label="Fuente de precios"><Select value={source} onChange={(e) => setSource(e.target.value)}>{["Yahoo", "Morningstar", "CoinGecko", "Stooq", "Twelve Data", "Alpha Vantage", "Manual"].map((t) => <option key={t}>{t}</option>)}</Select></Field>
         <Field label="Color del producto"><ColorPicker value={color} onChange={setColor} /></Field>
+
+        <div className="pv-divider" />
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>Composición del producto</p>
+            <p className="pv-faint text-[11px] leading-snug">Se usa en las vistas de sectores, países y top de empresas.</p>
+          </div>
+          <Btn
+            variant="ghost"
+            size="sm"
+            icon={feed.status === "loading" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            onClick={fetchProfile}
+            disabled={feed.status === "loading"}
+          >
+            {feed.status === "loading" ? "Buscando…" : "Buscar datos"}
+          </Btn>
+        </div>
+        {feed.message && (
+          <p className="text-[11px] leading-snug" style={{ color: feed.status === "error" ? "var(--neg)" : "var(--pos)" }}>{feed.message}</p>
+        )}
+
+        <BreakdownEditor
+          label="Sectores"
+          hint="Porcentaje de cada sector económico. Debe sumar 100 %."
+          rows={sectors}
+          onChange={setSectors}
+          placeholder="Tecnología"
+        />
+        <BreakdownEditor
+          label="Top 10 empresas"
+          hint="Mayores posiciones del producto y su peso."
+          rows={top}
+          onChange={setTop}
+          placeholder="Apple Inc."
+          max={10}
+        />
+        <BreakdownEditor
+          label="Países y regiones"
+          hint="Exposición geográfica del producto."
+          rows={countries}
+          onChange={setCountries}
+          placeholder="Estados Unidos"
+        />
       </div>
     </Modal>
   );
@@ -831,7 +1088,7 @@ function AccountForm({ onClose }: { onClose: () => void }) {
 
 function ProductForm({ accountId, onClose }: { accountId?: number; onClose: () => void }) {
   const { accounts, addHolding, holdings } = usePreview();
-  const inv = accounts.filter((a) => a.kind === "inversion");
+  const inv = accounts.filter((a) => a.kind === "inversion" && !a.archived);
   const [acc, setAcc] = useState(String(accountId ?? inv[0]?.id ?? 7));
   const [ticker, setTicker] = useState("");
   const [nickname, setNickname] = useState("");

@@ -97,6 +97,10 @@ export interface Holding {
   countries: [string, number][];
   /** Aportaciones de los últimos 24 meses en euros (índice 23 = mes actual) */
   contrib: number[];
+  /** Precio de referencia sobre el que se calculan las variaciones diarias (no lo mueve «Actualizar precios») */
+  priceBase?: number;
+  /** Último día en que se actualizó el precio (YYYY-MM-DD) */
+  pricesUpdatedOn?: string;
 }
 
 export interface MonthPoint {
