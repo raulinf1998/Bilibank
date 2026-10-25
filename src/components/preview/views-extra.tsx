@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Database, Download, Globe, KeyRound, Palette, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Tag, Trash2, TriangleAlert, Upload, Check, X } from "lucide-react";
+import { ChevronRight, Database, Download, FileArchive, Globe, KeyRound, LoaderCircle, Palette, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Tag, Trash2, TriangleAlert, Upload, Check, X } from "lucide-react";
+import { strFromU8, unzipSync } from "fflate";
+import { buildSnapshot, type ImportSummary } from "@/lib/moneymatter";
 import { PERIODS, holdingValue, subColor } from "@/lib/mock";
 import { DATA_COLORS, DATA_COLOR_NAMES, chartColor } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
-import { TODAY, addDays, bucketLabels, bucketize, changePct, flowsFor, inPeriod, periodLabel, periodMonths, periodRange, periodShort, sampleAtBuckets, windowSeries } from "@/lib/series";
+import { TODAY, addDays, setTodayReference, bucketLabels, bucketize, changePct, flowsFor, inPeriod, periodLabel, periodMonths, periodRange, periodShort, sampleAtBuckets, windowSeries } from "@/lib/series";
 import { formatEUR, formatEUR0, formatFullDate, formatNum, formatPct, formatSigned, formatDate } from "@/lib/format";
 import { ARCHETYPES, PALETTES, configFromArchetype, type ModeKey, type PaletteDef } from "@/lib/themes";
 import { usePaletteLibrary } from "./palettes";
@@ -702,6 +704,124 @@ function PaletteCard({ p, active, mode, onApply, onEdit }: { p: PaletteDef; acti
   );
 }
 
+
+/* ==================================================================
+   IMPORTADOR DE MONEYMATTER
+   Acepta el ZIP del export (CSV) y lo traduce al modelo de la app.
+================================================================== */
+
+type ImportState =
+  | { status: "idle" }
+  | { status: "reading"; name: string }
+  | { status: "done"; name: string; summary: ImportSummary }
+  | { status: "error"; name: string; message: string };
+
+function MoneyMatterImport() {
+  const { importData } = usePreview();
+  const [state, setState] = useState<ImportState>({ status: "idle" });
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    setState({ status: "reading", name: file.name });
+    try {
+      const files: Record<string, string> = {};
+      if (/\.zip$/i.test(file.name)) {
+        const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+        for (const [name, bytes] of Object.entries(entries)) {
+          if (name.endsWith("/") || !/\.(csv|json)$/i.test(name)) continue;
+          files[name] = strFromU8(bytes);
+        }
+        if (!Object.keys(files).length) throw new Error("El ZIP no contiene ficheros CSV.");
+      } else if (/\.json$/i.test(file.name)) {
+        // Copia de seguridad creada por esta misma pantalla.
+        const ok = importData(await file.text());
+        if (!ok) throw new Error("El JSON no tiene el formato de copia de esta aplicación.");
+        setState({ status: "idle" });
+        return;
+      } else {
+        files[file.name] = await file.text();
+      }
+
+      const { snapshot, summary } = buildSnapshot(files, { source: file.name });
+      // La ventana temporal (periodos, gráficas, filtros) se ancla al último movimiento.
+      setTodayReference(summary.lastDate);
+      if (!importData(JSON.stringify(snapshot))) throw new Error("El export se leyó pero no se pudo aplicar.");
+      setState({ status: "done", name: file.name, summary });
+    } catch (error) {
+      setState({ status: "error", name: file.name, message: error instanceof Error ? error.message : "No se pudo leer el archivo" });
+    } finally {
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const busy = state.status === "reading";
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".zip,.csv,application/zip,application/x-zip-compressed,text/csv"
+        className="hidden"
+        onChange={(e) => handleFile(e.target.files?.[0])}
+      />
+      <SettingRow
+        icon={<FileArchive className="h-4 w-4" />}
+        colorIdx={0}
+        title="Importar export de MoneyMatter"
+        hint="ZIP con accounts.csv, transactions.csv, categories.csv, holdings.csv…"
+        right={
+          <Btn
+            variant="ghost"
+            size="sm"
+            icon={busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+          >
+            {busy ? "Leyendo…" : "Importar ZIP"}
+          </Btn>
+        }
+      />
+
+      {state.status === "reading" && <p className="pv-muted mt-2 text-[11px]">Leyendo {state.name}…</p>}
+
+      {state.status === "error" && (
+        <p className="mt-2 text-[11px] font-semibold" style={{ color: "var(--neg)" }}>
+          {state.name}: {state.message}
+        </p>
+      )}
+
+      {state.status === "done" && (
+        <div className="mt-3 p-3" style={{ background: "var(--accent-soft)", border: "1px solid var(--accent)", borderRadius: "var(--radius)" }}>
+          <p className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: "var(--accent)" }}>
+            <Check className="h-3.5 w-3.5" strokeWidth={3} /> Export importado
+          </p>
+          <p className="pv-muted mt-1 text-[11px]">{state.name}</p>
+          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]" style={{ color: "var(--text)" }}>
+            <span>{state.summary.transactions} movimientos</span>
+            <span>{state.summary.transfers} traspasos</span>
+            <span>{state.summary.accounts} cuentas</span>
+            <span>{state.summary.investmentAccounts} carteras</span>
+            <span>{state.summary.holdings} productos · {state.summary.operations} operaciones</span>
+            <span>{state.summary.categories} categorías · {state.summary.subcategories} subcategorías</span>
+          </div>
+          {state.summary.firstDate && state.summary.lastDate && (
+            <p className="pv-faint mt-1.5 text-[11px]">
+              Periodo: {formatDate(state.summary.firstDate)} — {formatDate(state.summary.lastDate)}
+            </p>
+          )}
+          {state.summary.warnings.length > 0 && (
+            <ul className="pv-faint mt-2 list-disc pl-4 text-[10.5px] leading-snug">
+              {state.summary.warnings.map((w) => <li key={w}>{w}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function SettingsView() {
   const { arch, cfg, patchConfig, isMobile } = useArch();
   const { accounts, holdings, categories, transactions, sources, toggleSource, exportData, importData, resetData, openModal } = usePreview();
@@ -856,6 +976,7 @@ export function SettingsView() {
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
           <SettingRow icon={<ShieldCheck className="h-4 w-4" />} colorIdx={3} title="Descargar copia de seguridad" hint="Cuentas, categorías, productos y movimientos en JSON" right={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => downloadFile("mi-patrimonio-copia.json", exportData(), "application/json")}>Descargar</Btn>} />
           <SettingRow icon={<Database className="h-4 w-4" />} colorIdx={1} title="Importar / restaurar datos" hint="Carga una copia descargada desde aquí" right={<Btn variant="ghost" size="sm" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => fileRef.current?.click()}>Importar</Btn>} />
+          <MoneyMatterImport />
           <SettingRow icon={<RotateCcw className="h-4 w-4" />} colorIdx={4} title="Restablecer datos de ejemplo" hint="Vuelve a las 10 cuentas, 8 categorías y 10 productos iniciales" right={<Btn variant="ghost" size="sm" onClick={resetData}>Restablecer</Btn>} />
           <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] pv-muted">
             <span>{accounts.length} cuentas</span><span>{holdings.length} productos</span>

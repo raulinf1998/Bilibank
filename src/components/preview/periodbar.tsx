@@ -19,11 +19,12 @@ import {
 } from "@/lib/series";
 import { usePreview } from "./state";
 
-const MIN_YM = DATA_FROM.slice(0, 7);
-const MAX_YM = DATA_TO.slice(0, 7);
-const MIN_YEAR = Number(MIN_YM.slice(0, 4));
-const MAX_YEAR = Number(MAX_YM.slice(0, 4));
-const inData = (ym: string) => ym >= MIN_YM && ym <= MAX_YM;
+/* La ventana de datos depende de la fecha de referencia (cambia al importar). */
+const monthBounds = () => {
+  const min = DATA_FROM.slice(0, 7);
+  const max = DATA_TO.slice(0, 7);
+  return { MIN_YM: min, MAX_YM: max, MIN_YEAR: Number(min.slice(0, 4)), MAX_YEAR: Number(max.slice(0, 4)), inData: (ym: string) => ym >= min && ym <= max };
+};
 
 const CHIPS: { id: string; label: string }[] = [
   { id: "3M", label: "3M" },
@@ -63,6 +64,7 @@ function IconBtn({ label, disabled, onClick, children }: { label: string; disabl
 export function PeriodBar() {
   const { period, setPeriod } = usePreview();
   const [open, setOpen] = useState<null | "month" | "range">(null);
+  const { MIN_YM, MAX_YM, MIN_YEAR, MAX_YEAR, inData } = monthBounds();
   const [viewYear, setViewYear] = useState(MAX_YEAR);
   const { from, to } = periodRange(period);
   const curYM = isMonthPeriod(period) ? monthOf(period) : to.slice(0, 7);

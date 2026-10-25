@@ -5,7 +5,10 @@
    · un rango personalizado ("r:YYYY-MM-DD:YYYY-MM-DD"). */
 
 const DAY = 86400000;
-export const TODAY = "2026-02-24";
+
+/** Fecha de referencia («hoy») de la demo. `setTodayReference` la ajusta a los datos importados. */
+const DEFAULT_TODAY = "2026-02-24";
+export let TODAY = DEFAULT_TODAY;
 export const FULL_DAYS = 730;
 export const PERIOD_DAYS: Record<string, number> = { "1M": 30, "3M": 90, "6M": 182, "1A": 365, MAX: 730 };
 
@@ -20,9 +23,21 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((ms(b) - ms(a)) / DAY);
 }
 
-/** Primer y último día con datos */
-export const DATA_FROM = addDays(TODAY, -(FULL_DAYS - 1));
-export const DATA_TO = TODAY;
+/** Primer y último día con datos (se recalculan al fijar la fecha de referencia). */
+export let DATA_FROM = addDays(TODAY, -(FULL_DAYS - 1));
+export let DATA_TO = TODAY;
+
+/**
+ * Ancla la ventana temporal a la fecha real de los datos cargados
+ * (por ejemplo, el último movimiento de un export de MoneyMatter).
+ * Sin argumento, vuelve a la fecha de la demo.
+ */
+export function setTodayReference(iso?: string | null): void {
+  const next = typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : DEFAULT_TODAY;
+  TODAY = next;
+  DATA_TO = next;
+  DATA_FROM = addDays(next, -(FULL_DAYS - 1));
+}
 
 export const isMonthPeriod = (p: string) => p.startsWith("m:");
 export const isRangePeriod = (p: string) => p.startsWith("r:");

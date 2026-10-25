@@ -15,6 +15,7 @@ import {
   type Subcategory,
   type Tx,
 } from "@/lib/mock";
+import { setTodayReference } from "@/lib/series";
 import type { ArchetypeDef, DesignConfig, DonutKey } from "@/lib/themes";
 import { getArchetype } from "@/lib/themes";
 
@@ -112,7 +113,20 @@ const Ctx = createContext<PreviewState | null>(null);
 
 const sortTx = (list: Tx[]) => [...list].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id));
 
+/** Última fecha con movimientos; ancla la ventana temporal de periodos y gráficas. */
+function anchorDate(data: WorkspaceSnapshot | null | undefined): string | null {
+  if (!data?.transactions?.length) return null;
+  let max = "";
+  for (const tx of data.transactions) if (tx.date > max) max = tx.date;
+  return max || null;
+}
+
 export function PreviewDataProvider({ children, initialRoute, initialModal, initialData, persist = false }: { children: ReactNode; initialRoute?: Route; initialModal?: ModalKind; initialData?: WorkspaceSnapshot | null; persist?: boolean }) {
+  /* La ventana temporal se ancla antes de renderizar los hijos para que el HTML
+     del servidor y el del cliente usen la misma fecha de referencia. */
+  const anchor = useMemo(() => anchorDate(initialData), [initialData]);
+  setTodayReference(anchor);
+
   const [route, setRoute] = useState<Route>(initialRoute ?? { page: "panel" });
   const [history, setHistory] = useState<Route[]>([]);
   const [stack, setStack] = useState<ModalKind[]>(initialModal ? [initialModal] : []);
@@ -548,8 +562,16 @@ interface ArchCtx {
 
 const ArchContext = createContext<ArchCtx | null>(null);
 
-export function ArchProvider({ cfg, patchConfig, children }: { cfg: DesignConfig; patchConfig?: (p: Partial<DesignConfig>) => void; children: ReactNode }) {
-  const value = useMemo<ArchCtx>(() => ({ cfg, arch: { ...getArchetype(cfg.archetypeKey), chartStyle: cfg.chartStyleKey }, isMobile: cfg.device === "mobile", patchConfig }), [cfg, patchConfig]);
+export function ArchProvider({ cfg, patchConfig, isMobile, children }: { cfg: DesignConfig; patchConfig?: (p: Partial<DesignConfig>) => void; /** Anula el dispositivo guardado (la app cambia sola a móvil en pantallas estrechas) */ isMobile?: boolean; children: ReactNode }) {
+  const value = useMemo<ArchCtx>(
+    () => ({
+      cfg,
+      arch: { ...getArchetype(cfg.archetypeKey), chartStyle: cfg.chartStyleKey },
+      isMobile: isMobile ?? cfg.device === "mobile",
+      patchConfig,
+    }),
+    [cfg, patchConfig, isMobile],
+  );
   return <ArchContext.Provider value={value}>{children}</ArchContext.Provider>;
 }
 
