@@ -13,6 +13,7 @@ import { Btn, Toast } from "./primitives";
 import { ModalHost } from "./forms";
 import { usePaletteLibrary } from "./palettes";
 import { AccountsView, PanelView, PortfolioView, useTotals } from "./views-main";
+import { useIsNarrow } from "./use-viewport";
 import { CategoriesView, ChartsView, SettingsView } from "./views-extra";
 
 const ICON: Record<string, ReactNode> = {
@@ -24,10 +25,18 @@ const ICON: Record<string, ReactNode> = {
   settings: <Settings className="h-[17px] w-[17px]" />,
 };
 
-export function AppPreview({ cfg, onConfigChange }: { cfg: DesignConfig; onConfigChange?: (p: Partial<DesignConfig>) => void }) {
+export function AppPreview({ cfg, onConfigChange, autoResponsive = false }: {
+  cfg: DesignConfig;
+  onConfigChange?: (p: Partial<DesignConfig>) => void;
+  /** Adapta la estructura al ancho real de la ventana (sin marco de teléfono). */
+  autoResponsive?: boolean;
+}) {
+  const narrow = useIsNarrow();
+  /* Con `autoResponsive` manda el ancho real de la ventana; en el laboratorio, el dispositivo elegido. */
+  const isMobile = autoResponsive ? narrow : cfg.device === "mobile";
   return (
-    <ArchProvider cfg={cfg} patchConfig={onConfigChange}>
-      <Frame />
+    <ArchProvider cfg={cfg} patchConfig={onConfigChange} isMobile={isMobile}>
+      <Frame fullBleed={isMobile && autoResponsive} />
     </ArchProvider>
   );
 }
@@ -49,15 +58,30 @@ function useNav() {
   return { current: route.page, nav: (id: NavId) => go({ page: id }), newTx: () => openModal({ kind: "tx" }) };
 }
 
-function Frame() {
+function Frame({ fullBleed = false }: { fullBleed?: boolean }) {
   const { cfg, arch, isMobile } = useArch();
   const { toast } = usePreview();
   const { resolve } = usePaletteLibrary();
   const vars = toCssVars(cfg, resolve(cfg.paletteKey)) as CSSProperties;
 
   if (isMobile) {
+    /* Pantalla estrecha: la app ocupa toda la ventana, sin bisel ni marco. */
+    if (fullBleed) {
+      return (
+        <div className="pv-root pv-mesh relative w-full overflow-hidden" style={{ ...vars, backgroundAttachment: "scroll", height: "100dvh" }}>
+          <div className="lab-scroll flex h-full flex-col overflow-y-auto">
+            <MobileHeader />
+            <main className="flex-1 px-3.5 pb-28 pt-3.5"><CurrentView /></main>
+          </div>
+          <MobileNav />
+          <ModalHost />
+          <Toast message={toast} />
+        </div>
+      );
+    }
+    /* Vista previa de teléfono dentro de una pantalla ancha (laboratorio). */
     return (
-      <div className="flex justify-center py-2">
+      <div className="flex justify-center">
         <div className="pv-root pv-mesh relative w-full max-w-[400px] overflow-hidden" style={{ ...vars, backgroundAttachment: "scroll", borderRadius: 34, border: "1px solid var(--border-strong)", boxShadow: "0 40px 90px -40px rgba(0,0,0,.85)", height: 800 }}>
           <div className="lab-scroll flex h-full flex-col overflow-y-auto">
             <MobileHeader />
@@ -73,7 +97,7 @@ function Frame() {
 
   const shell = arch.shell;
   return (
-    <div className="pv-root pv-mesh relative overflow-clip" style={{ ...vars, borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", minHeight: 760 }}>
+    <div className="pv-root pv-mesh relative w-full overflow-clip" style={{ ...vars, minHeight: "100dvh" }}>
       {shell === "sidebar" && <SidebarShell><CurrentView /></SidebarShell>}
       {shell === "floating" && <FloatingShell><CurrentView /></FloatingShell>}
       {shell === "dock" && <DockShell><CurrentView /></DockShell>}

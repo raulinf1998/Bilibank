@@ -1,0 +1,12 @@
+﻿Name,Type,Currency,InitialBalance,CurrentBalance,Group,ExcludedFromStats,Status,BankProvider
+Abanca,system,EUR,0,0,,,active,
+Bankinter,system,EUR,0,278.19,,,active,
+Bankinter pequeñaja,system,EUR,0,0,,,active,
+Efectivo,system,EUR,0,642,,,active,
+MyInvestor,system,EUR,0,0,,,archived,
+MyInvestor Ahorro,system,EUR,0,0,,,archived,
+Revolut,system,EUR,0,20,,,active,
+TraRep Inv,system,EUR,0,0,,1,archived,
+TraRep Peque Inv,system,EUR,0,363.11,,,active,
+TRP,system,EUR,0,229.46,,,active,
+TRP Peque,system,EUR,0,18251.91,,,active,

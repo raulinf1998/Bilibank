@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-09-08T09:53:18.497Z",
+  "format": "csv",
+  "groups": [
+    "transactions",
+    "budgets",
+    "subscriptions",
+    "investments"
+  ],
+  "files": [
+    {
+      "filename": "transactions.csv",
+      "sha256": "5c4f29c9dcd1f9a2ef1206764155f5b8d01b39600a47c0aa5594182c077d504a",
+      "sizeBytes": 65793,
+      "rowCount": 759
+    },
+    {
+      "filename": "accounts.csv",
+      "sha256": "1f40acd259af45ca78570199219f15963a6a3c0d932af851780a129a3eb6a44a",
+      "sizeBytes": 529,
+      "rowCount": 11
+    },
+    {
+      "filename": "balances_history.csv",
+      "sha256": "e1551f601715e2e6ec71b4bc3b36d898ba9dc42beec9167a639b07012f6ee518",
+      "sizeBytes": 19752,
+      "rowCount": 687
+    },
+    {
+      "filename": "categories.csv",
+      "sha256": "c7b8cb6095e5b92ca0f1a75a021bbdebc0f88d7e0cdf51020ac78de4e2f2d914",
+      "sizeBytes": 5342,
+      "rowCount": 102
+    },
+    {
+      "filename": "tags.csv",
+      "sha256": "7b20c27a47908def6302b7f4b2d0a36487c5c99460792b8a03c412b19b063a4f",
+      "sizeBytes": 204,
+      "rowCount": 3
+    },
+    {
+      "filename": "vehicles.csv",
+      "sha256": "1295f5149f374ee04464e646f189a2e65b3dcca02fd944cb5dbe8e747669b17a",
+      "sizeBytes": 86,
+      "rowCount": 0
+    },
+    {
+      "filename": "budgets.csv",
+      "sha256": "4dea8bdedced6881259758869216862829fe27ce11c5130b13980c7ea02f02e4",
+      "sizeBytes": 81,
+      "rowCount": 0
+    },
+    {
+      "filename": "subscriptions.csv",
+      "sha256": "5186d44fd7891ad4be0048c4918f40dfc054eba197e2b302c90463e45096b23a",
+      "sizeBytes": 100,
+      "rowCount": 0
+    },
+    {
+      "filename": "transaction_templates.csv",
+      "sha256": "c9caa5340ab1d3b06bb5562aed088764624c6f5f032b4672c0fab6f2ce416202",
+      "sizeBytes": 109,
+      "rowCount": 1
+    },
+    {
+      "filename": "portfolios.csv",
+      "sha256": "41f26580a6f14538c7b93833ff5748138007f0b38f3e669045eaef5a5bc4114a",
+      "sizeBytes": 124,
+      "rowCount": 4
+    },
+    {
+      "filename": "holdings.csv",
+      "sha256": "b014257635986176f429a09ab4d007f6e9299558d70f2de4e9ee6e81fb717893",
+      "sizeBytes": 1055,
+      "rowCount": 10
+    },
+    {
+      "filename": "investment_transactions.csv",
+      "sha256": "84d8f2271e59362bce5ce6370544c0c059ce24e894fa8e3811c551e073aa36db",
+      "sizeBytes": 4322,
+      "rowCount": 57
+    },
+    {
+      "filename": "portfolio_transfers.csv",
+      "sha256": "089fe833800f743bf0731c9f5304578013a24b3999f1143044f3d8d9d4c15241",
+      "sizeBytes": 243,
+      "rowCount": 4
+    }
+  ]
+}
