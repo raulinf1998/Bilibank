@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.env
+.env.*
+npm-debug.log*
+*.log
+public/download
+docs
+deploy
+README*.md
+LEEME*.md
+VERSION.txt
+.tmp
