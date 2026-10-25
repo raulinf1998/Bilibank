@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { BarChart3, Bell, Briefcase, Check, ChevronDown, ChevronRight, ChevronUp, FolderTree, LayoutDashboard, PiggyBank, Plus, Search, Settings, Wallet } from "lucide-react";
 import type { DesignConfig } from "@/lib/themes";
 import { toCssVars } from "@/lib/themes";
@@ -58,6 +58,21 @@ function useNav() {
   return { current: route.page, nav: (id: NavId) => go({ page: id }), newTx: () => openModal({ kind: "tx" }) };
 }
 
+/**
+ * Cualquier cambio de pantalla (pestaña, cuenta, producto o categoría) vuelve a
+ * dejar la vista arriba: se resetea el scroll de la ventana y el de los
+ * contenedores con scroll propio (`.lab-scroll`), sin tocar los modales.
+ */
+function ScrollToTop() {
+  const { route } = usePreview();
+  const { page, accountId, productId, categoryId } = route;
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    for (const el of document.querySelectorAll<HTMLElement>(".lab-scroll")) el.scrollTop = 0;
+  }, [page, accountId, productId, categoryId]);
+  return null;
+}
+
 function Frame({ fullBleed = false }: { fullBleed?: boolean }) {
   const { cfg, arch, isMobile } = useArch();
   const { toast } = usePreview();
@@ -69,6 +84,7 @@ function Frame({ fullBleed = false }: { fullBleed?: boolean }) {
     if (fullBleed) {
       return (
         <div className="pv-root pv-mesh relative w-full overflow-hidden" style={{ ...vars, backgroundAttachment: "scroll", height: "100dvh" }}>
+          <ScrollToTop />
           <div className="lab-scroll flex h-full flex-col overflow-y-auto">
             <MobileHeader />
             <main className="flex-1 px-3.5 pb-28 pt-3.5"><CurrentView /></main>
@@ -83,6 +99,7 @@ function Frame({ fullBleed = false }: { fullBleed?: boolean }) {
     return (
       <div className="flex justify-center">
         <div className="pv-root pv-mesh relative w-full max-w-[400px] overflow-hidden" style={{ ...vars, backgroundAttachment: "scroll", borderRadius: 34, border: "1px solid var(--border-strong)", boxShadow: "0 40px 90px -40px rgba(0,0,0,.85)", height: 800 }}>
+          <ScrollToTop />
           <div className="lab-scroll flex h-full flex-col overflow-y-auto">
             <MobileHeader />
             <main className="flex-1 px-3.5 pb-28 pt-3.5"><CurrentView /></main>
@@ -98,6 +115,7 @@ function Frame({ fullBleed = false }: { fullBleed?: boolean }) {
   const shell = arch.shell;
   return (
     <div className="pv-root pv-mesh relative w-full overflow-clip" style={{ ...vars, minHeight: "100dvh" }}>
+      <ScrollToTop />
       {shell === "sidebar" && <SidebarShell><CurrentView /></SidebarShell>}
       {shell === "floating" && <FloatingShell><CurrentView /></FloatingShell>}
       {shell === "dock" && <DockShell><CurrentView /></DockShell>}

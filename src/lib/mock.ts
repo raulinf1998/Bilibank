@@ -55,6 +55,10 @@ export interface Tx {
   amount: number;
   tags?: string[];
   note?: string;
+  /** Operación de inversión que originó este movimiento (compras de productos) */
+  operationId?: number;
+  /** Producto al que pertenece esa operación */
+  productId?: number;
 }
 
 export interface Operation {
