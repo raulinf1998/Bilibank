@@ -13,7 +13,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X } from "lucide-react";
-import { TODAY, addDays, addMonthsYM, monthTitle } from "@/lib/series";
+import { addDays, addMonthsYM, monthTitle } from "@/lib/series";
+import { todayIso } from "@/lib/market";
 
 const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"];
 const MARGIN = 12;
@@ -70,8 +71,11 @@ function dateLabel(value: string) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+/** El calendario se guía por el día real, no por la fecha ancla de los datos. */
+const realToday = (): string => todayIso();
+
 function relativeLabel(value: string) {
-  const diff = Math.round((Date.parse(`${TODAY}T12:00:00Z`) - Date.parse(`${value}T12:00:00Z`)) / 86400000);
+  const diff = Math.round((Date.parse(`${realToday()}T12:00:00Z`) - Date.parse(`${value}T12:00:00Z`)) / 86400000);
   if (diff === 0) return "Hoy";
   if (diff === 1) return "Ayer";
   if (diff > 1) return `Hace ${diff} días`;
@@ -304,20 +308,20 @@ function CalendarPopover({ id, anchorRef, theme, value, onSelect, onClose }: {
                 data-date={date}
                 aria-label={dateLabel(date)}
                 aria-pressed={selected}
-                aria-current={date === TODAY ? "date" : undefined}
+                aria-current={date === realToday() ? "date" : undefined}
                 onClick={() => onSelect(date)}
                 onKeyDown={(event) => navigateDay(event, date)}
                 className="pv-num relative grid h-9 min-w-0 place-items-center text-[12.5px] font-medium transition-colors hover:bg-[var(--hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
                 style={{ borderRadius: 10, background: selected ? "var(--accent)" : undefined, color: selected ? "var(--accent-fg)" : "var(--text)", fontWeight: selected ? 700 : 500 }}
               >
                 {day}
-                {date === TODAY && !selected && <span aria-hidden className="absolute bottom-1 h-1 w-1 rounded-full" style={{ background: "var(--accent)" }} />}
+                {date === realToday() && !selected && <span aria-hidden className="absolute bottom-1 h-1 w-1 rounded-full" style={{ background: "var(--accent)" }} />}
               </button>
             );
           })}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5 border-t pt-2.5" style={{ borderColor: "var(--border)" }}>
-          {[["Hoy", TODAY], ["Ayer", addDays(TODAY, -1)], ["Hace 7 días", addDays(TODAY, -7)]].map(([label, date]) => (
+          {[["Hoy", realToday()], ["Ayer", addDays(realToday(), -1)], ["Hace 7 días", addDays(realToday(), -7)]].map(([label, date]) => (
             <button key={label} type="button" onClick={() => onSelect(date)} className="min-w-0 flex-1 whitespace-nowrap rounded-lg px-2 py-2 text-[11px] font-semibold" style={{ background: "var(--surface-2)", color: date === value ? "var(--accent)" : "var(--muted)", border: "1px solid var(--border)" }}>
               {label}
             </button>

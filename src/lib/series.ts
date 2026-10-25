@@ -1,13 +1,20 @@
-/* Series temporales y periodos de análisis de la demo.
-   "Hoy" es 24/02/2026. Un periodo puede ser:
+/* Series temporales y periodos de análisis.
+   "Hoy" es la fecha real del navegador (o la del último dato si éste es posterior).
+   Un periodo puede ser:
    · un preset ("1M" | "3M" | "6M" | "1A" | "MAX") que termina hoy,
    · un mes concreto ("m:YYYY-MM"),
    · un rango personalizado ("r:YYYY-MM-DD:YYYY-MM-DD"). */
 
 const DAY = 86400000;
 
-/** Fecha de referencia («hoy») de la demo. `setTodayReference` la ajusta a los datos importados. */
+/** Fecha de referencia por defecto. `setTodayReference` la ajusta al día real. */
 const DEFAULT_TODAY = "2026-02-24";
+
+/** Fecha real de hoy (YYYY-MM-DD, hora local del navegador). */
+function localTodayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 export let TODAY = DEFAULT_TODAY;
 export const FULL_DAYS = 730;
 export const PERIOD_DAYS: Record<string, number> = { "1M": 30, "3M": 90, "6M": 182, "1A": 365, MAX: 730 };
@@ -28,12 +35,17 @@ export let DATA_FROM = addDays(TODAY, -(FULL_DAYS - 1));
 export let DATA_TO = TODAY;
 
 /**
- * Ancla la ventana temporal a la fecha real de los datos cargados
- * (por ejemplo, el último movimiento de un export de MoneyMatter).
- * Sin argumento, vuelve a la fecha de la demo.
+ * Ancla la ventana temporal al día real del calendario, de modo que un
+ * movimiento nuevo con fecha de hoy siempre caiga dentro del periodo visible.
+ *
+ * `iso` es la fecha del último dato cargado (por ejemplo, el último movimiento
+ * de un export de MoneyMatter): solo se usa si es posterior al día real, para
+ * no dejar fuera movimientos futuros ya registrados.
  */
 export function setTodayReference(iso?: string | null): void {
-  const next = typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : DEFAULT_TODAY;
+  const real = localTodayIso();
+  const dataDate = typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : DEFAULT_TODAY;
+  const next = dataDate > real ? dataDate : real;
   TODAY = next;
   DATA_TO = next;
   DATA_FROM = addDays(next, -(FULL_DAYS - 1));

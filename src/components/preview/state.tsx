@@ -16,6 +16,7 @@ import {
   type Tx,
 } from "@/lib/mock";
 import { setTodayReference } from "@/lib/series";
+import { removeTransaction } from "@/lib/ledger";
 import { shortDate, stablePrice, todayIso, withPrice } from "@/lib/market";
 import { demoteCategory as demoteInTree, moveItem, moveSubcategory as moveSubInTree, promoteSubcategory as promoteInTree, remapTransaction } from "@/lib/category-tree";
 import type { ArchetypeDef, DesignConfig, DonutKey } from "@/lib/themes";
@@ -660,10 +661,20 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
         return;
       }
 
+      /* Un traspaso son dos apuntes (salida y entrada): se borran siempre los
+         dos, aunque la baja se pida desde una sola de las cuentas. */
+      if (tx.categoryId === 0) {
+        const next = removeTransaction(tx, transactions, accounts);
+        setTransactions(next.transactions);
+        setAccounts(next.accounts);
+        flash(next.removed > 1 ? "Traspaso eliminado en las dos cuentas" : "Traspaso eliminado");
+        return;
+      }
+
       setAccounts((list) => list.map((a) => (a.id === tx.accountId ? { ...a, balance: a.balance - tx.amount } : a)));
       flash("Movimiento eliminado");
     },
-    [transactions, settlePurchase, flash],
+    [transactions, accounts, settlePurchase, flash],
   );
 
   const setAccountArchived = useCallback(
