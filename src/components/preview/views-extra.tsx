@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Database, Download, FileArchive, Globe, KeyRound, LoaderCircle, Palette, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Tag, Trash2, TriangleAlert, Upload, Check, X } from "lucide-react";
+import { ChevronRight, Database, Download, FileArchive, Globe, KeyRound, ListTree, LoaderCircle, Palette, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Tag, Trash2, TriangleAlert, Upload, Check, X } from "lucide-react";
 import { strFromU8, unzipSync } from "fflate";
 import { buildSnapshot, type ImportSummary } from "@/lib/moneymatter";
 import { PERIODS, holdingValue, subColor } from "@/lib/mock";
@@ -51,6 +51,7 @@ function CategoriesList() {
       <PageHeader kicker={`${categories.length} categorías · ${subCount} subcategorías`} title="Categorías" action={
         <>
           <Segmented options={PERIODS} value={period} onChange={setPeriod} />
+          <Btn variant="ghost" icon={<ListTree className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "organizeCategories" })}>Organizar</Btn>
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "category" })}>Nueva categoría</Btn>
         </>
       } />
@@ -142,6 +143,7 @@ function CategoryDetail({ id }: { id: number }) {
     <Stack>
       <PageHeader onBack={back} kicker={`Categoría · ${c.subcategories.length} subcategorías`} title={c.name} action={
         <>
+          <Btn variant="ghost" icon={<ListTree className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "organizeCategories", categoryId: c.id })}>Organizar</Btn>
           <Btn variant="ghost" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "editCategory", categoryId: c.id })}>Editar</Btn>
           <Btn variant="ghost" icon={<Tag className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "category", parentId: c.id })}>Nueva subcategoría</Btn>
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "tx", categoryId: c.id })}>Nuevo movimiento</Btn>
@@ -843,6 +845,7 @@ export function SettingsView() {
       radiusKey: cfg.radiusKey,
       densityKey: cfg.densityKey,
       donutKey: cfg.donutKey,
+      cardStyleKey: cfg.cardStyleKey,
     });
   };
 

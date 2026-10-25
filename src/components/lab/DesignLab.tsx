@@ -54,7 +54,9 @@ function Lab({ initialConfig, initialFeedback }: { initialConfig: DesignConfig; 
   const pickArchetype = useCallback((a: ArchetypeDef) => {
     setCfg((c) => {
       const base = { ...configFromArchetype(a.key, c.device), donutKey: c.donutKey };
-      return keepMix ? { ...base, mode: c.mode, paletteKey: c.paletteKey, accentOverride: c.accentOverride, fontKey: c.fontKey, chartStyleKey: c.chartStyleKey, radiusKey: c.radiusKey, densityKey: c.densityKey } : base;
+      return keepMix
+        ? { ...base, mode: c.mode, paletteKey: c.paletteKey, accentOverride: c.accentOverride, fontKey: c.fontKey, chartStyleKey: c.chartStyleKey, radiusKey: c.radiusKey, densityKey: c.densityKey, cardStyleKey: c.cardStyleKey, donutKey: c.donutKey }
+        : { ...base, cardStyleKey: c.cardStyleKey };
     });
     setTab("preview");
   }, [keepMix]);

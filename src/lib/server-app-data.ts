@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { asc } from "drizzle-orm";
-import { db } from "@/db";
+import { db, ensureSchema } from "@/db";
 import { customPalettes, designPreferences, workspaceData } from "@/db/schema";
 import { coerceConfig, defaultConfig, parseSeeds } from "@/lib/themes";
 import { buildSnapshot } from "@/lib/moneymatter";
@@ -46,6 +46,7 @@ export async function loadAppState() {
   let data: WorkspaceSnapshot | null = null;
 
   try {
+    await ensureSchema();
     const [prefs, rows, workspace] = await Promise.all([
       db.select().from(designPreferences).orderBy(asc(designPreferences.id)).limit(1),
       db.select().from(customPalettes).orderBy(asc(customPalettes.id)).catch(() => []),

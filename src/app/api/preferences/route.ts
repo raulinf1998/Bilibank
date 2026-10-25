@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { asc, eq } from "drizzle-orm";
-import { db } from "@/db";
+import { db, ensureSchema } from "@/db";
 import { designPreferences } from "@/db/schema";
 import { coerceConfig, defaultConfig } from "@/lib/themes";
 
@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    await ensureSchema();
     const rows = await db.select().from(designPreferences).orderBy(asc(designPreferences.id)).limit(1);
     const row = rows[0];
     if (!row) return NextResponse.json({ config: defaultConfig(), saved: false });
@@ -29,6 +30,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ ok: false, error: "JSON inválido" }, { status: 400 });
   }
 
+  await ensureSchema();
   const config = coerceConfig((body ?? {}) as Record<string, unknown>);
   const { archetypeKey, ...rest } = config;
   const row = { ...rest, themeKey: archetypeKey };

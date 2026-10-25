@@ -20,6 +20,8 @@ export type KpiKey = "card" | "ticker" | "statement" | "tile" | "hero" | "block"
 export type ButtonKey = "filled" | "square" | "link" | "pill" | "soft" | "brutal" | "neu" | "tonal" | "code" | "gradient";
 export type ListKey = "rows" | "dense" | "ledger" | "tiles" | "avatars" | "blocks" | "cards" | "leader" | "timeline";
 export type ModalKey = "dialog" | "drawer" | "sheet";
+/** Estilo de las tarjetas de cuenta de la pestaña Cuentas. */
+export type CardStyleKey = "hielo" | "cristal" | "mate" | "neon" | "aurora" | "solido";
 
 export interface ModeTokens {
   bg: string; bgImage: string; surface: string; surface2: string; border: string; borderStrong: string;
@@ -925,6 +927,8 @@ export interface DesignConfig {
   accentOverride: string | null;
   /** Estilo de los gráficos de donut */
   donutKey: DonutKey;
+  /** Estilo elegido para las tarjetas de cuenta (se guarda y se recuerda) */
+  cardStyleKey: CardStyleKey;
 }
 
 export function configFromArchetype(key: string, device: DeviceKey = "desktop"): DesignConfig {
@@ -940,6 +944,7 @@ export function configFromArchetype(key: string, device: DeviceKey = "desktop"):
     device,
     accentOverride: null,
     donutKey: "ring",
+    cardStyleKey: "hielo",
   };
 }
 
@@ -959,6 +964,8 @@ function pick<T extends string>(value: unknown, allowed: readonly T[], fallback:
 }
 
 /** Normaliza datos desconocidos (BD, API) a una configuración válida. */
+export const CARD_STYLE_KEYS: CardStyleKey[] = ["hielo", "cristal", "mate", "neon", "aurora", "solido"];
+
 export function coerceConfig(payload: Record<string, unknown>): DesignConfig {
   const rawArch = typeof payload.archetypeKey === "string" ? payload.archetypeKey : typeof payload.themeKey === "string" ? payload.themeKey : "";
   const a = getArchetype(rawArch);
@@ -975,6 +982,7 @@ export function coerceConfig(payload: Record<string, unknown>): DesignConfig {
     device: pick(payload.device, DEVICE_KEYS, "desktop"),
     accentOverride: typeof payload.accentOverride === "string" && isHexColor(payload.accentOverride) ? payload.accentOverride : null,
     donutKey: pick(payload.donutKey, Object.keys(DONUTS) as DonutKey[], "ring"),
+    cardStyleKey: pick(payload.cardStyleKey, CARD_STYLE_KEYS, "hielo"),
   };
 }
 

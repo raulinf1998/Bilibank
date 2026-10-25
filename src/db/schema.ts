@@ -22,6 +22,8 @@ export const designPreferences = pgTable(
     paletteKey: text("palette_key"),
     accentOverride: text("accent_override"),
     donutKey: text("donut_key"),
+    /** Estilo de las tarjetas de cuenta (hielo, cristal, mate, neón…) */
+    cardStyleKey: text("card_style_key"),
     mode: text("mode").notNull().default("dark"),
     fontKey: text("font_key"),
     chartStyleKey: text("chart_style_key"),

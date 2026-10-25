@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties, type ReactNode } from "react";
-import { BarChart3, Bell, Briefcase, ChevronDown, ChevronRight, FolderTree, LayoutDashboard, PiggyBank, Plus, Search, Settings, Wallet } from "lucide-react";
+import { BarChart3, Bell, Briefcase, Check, ChevronDown, ChevronRight, ChevronUp, FolderTree, LayoutDashboard, PiggyBank, Plus, Search, Settings, Wallet } from "lucide-react";
 import type { DesignConfig } from "@/lib/themes";
 import { toCssVars } from "@/lib/themes";
 import { NAV, type NavId } from "@/lib/mock";
@@ -137,7 +137,7 @@ function SidebarShell({ children }: { children: ReactNode }) {
           <div key={k}>
             <p className="pv-faint mt-4 px-4 text-[10px] font-bold uppercase tracking-[0.14em]">{k === "corriente" ? "Corrientes" : "Inversión"}</p>
             <ul className="mt-1 px-3">
-              {accounts.filter((a) => a.kind === k).map((a) => (
+              {accounts.filter((a) => a.kind === k && !a.archived).map((a) => (
                 <li key={a.id}><button type="button" onClick={() => go({ page: "cuentas", accountId: a.id })} className="pv-nav-item flex w-full items-center justify-between gap-2 px-2.5 py-1.5"><span className="truncate text-[11.5px]">{a.name}</span><span className="pv-num shrink-0 text-[11px] font-semibold" style={{ color: "var(--text)" }}>{formatEUR0(a.balance)}</span></button></li>
               ))}
             </ul>
@@ -164,7 +164,7 @@ function DockShell({ children }: { children: ReactNode }) {
   const { openModal } = usePreview();
   const { net } = useTotals();
   return (
-    <div className="mx-auto flex min-h-[760px] max-w-[1180px] flex-col px-8 pt-6">
+    <div className="mx-auto flex min-h-[760px] w-full flex-col px-4 pt-6 sm:px-6 lg:px-10 2xl:px-16">
       <header className="mb-6 flex items-center gap-4">
         <span className="grid h-12 w-12 place-items-center" style={{ background: "var(--bg)", boxShadow: "var(--neu-shadow-sm)", borderRadius: 999, color: "var(--accent)" }}><PiggyBank className="h-5 w-5" /></span>
         <div>
@@ -223,7 +223,7 @@ function AppBarShell({ children }: { children: ReactNode }) {
           })}
         </nav>
       </header>
-      <main className="mx-auto w-full max-w-[1180px] flex-1 p-6">{children}</main>
+      <main className="w-full flex-1 p-4 sm:p-6 lg:px-10 2xl:px-16">{children}</main>
       <div className="sticky bottom-6 z-30 flex justify-end pb-6 pr-6">
         <button type="button" onClick={newTx} className="flex items-center gap-2 px-5 py-4 text-[14px] font-bold" style={{ background: "var(--accent)", color: "var(--accent-fg)", borderRadius: 20, boxShadow: "var(--accent-glow)" }}>
           <Plus className="h-5 w-5" strokeWidth={2.8} /> Nuevo movimiento
@@ -283,8 +283,8 @@ function ExplorerShell({ children }: { children: ReactNode }) {
         <aside className="w-[252px] shrink-0 border-r py-2" style={{ background: "var(--sidebar)", borderColor: "var(--border-strong)" }}>
           <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: "var(--faint)", ...mono }}>Explorador · Mi Patrimonio</p>
           <div className="flex flex-col gap-1.5">
-            {group("cur", "cuentas_corrientes", accounts.filter((a) => a.kind === "corriente").map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
-            {group("inv", "cuentas_inversion", accounts.filter((a) => a.kind === "inversion").map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
+            {group("cur", "cuentas_corrientes", accounts.filter((a) => a.kind === "corriente" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
+            {group("inv", "cuentas_inversion", accounts.filter((a) => a.kind === "inversion" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
             {group("cat", "categorias", categories.map((c) => ({ id: c.id, name: c.name, right: `${c.subcategories.length}`, color: <span className="shrink-0" style={{ color: chartColor(c.colorIdx) }}>{iconNode(c.icon)}</span>, active: route.categoryId === c.id, onClick: () => openModal({ kind: "categoryTx", categoryId: c.id }) })))}
           </div>
         </aside>
@@ -302,7 +302,7 @@ function ExplorerShell({ children }: { children: ReactNode }) {
       </div>
       <footer className="flex items-center gap-4 px-3 py-1 text-[10.5px]" style={{ background: "var(--accent)", color: "var(--accent-fg)", ...mono }}>
         <span>● patrimonio {formatEUR0(net)}</span>
-        <span>{accounts.length} cuentas</span>
+        <span>{accounts.filter((a) => !a.archived).length} cuentas</span>
         <span>{holdings.length} productos</span>
         <span className="ml-auto">es-ES · EUR · UTF-8</span>
       </footer>
@@ -316,7 +316,7 @@ function FloatingShell({ children }: { children: ReactNode }) {
   const { current, nav, newTx } = useNav();
   const { openModal } = usePreview();
   return (
-    <div className="relative mx-auto min-h-[760px] max-w-[1100px] px-6 pb-10 pt-5">
+    <div className="relative mx-auto min-h-[760px] w-full px-4 pb-10 pt-5 sm:px-6 lg:px-10 2xl:px-16">
       <header className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <span className="grid h-9 w-9 place-items-center" style={{ background: "var(--accent-soft)", color: "var(--accent)", borderRadius: 999 }}><PiggyBank className="h-4 w-4" /></span>
@@ -348,7 +348,7 @@ function FeedShell({ children }: { children: ReactNode }) {
   const { openModal } = usePreview();
   const { net } = useTotals();
   return (
-    <div className="mx-auto flex min-h-[760px] max-w-[780px] flex-col px-4 pt-4">
+    <div className="mx-auto flex min-h-[760px] w-full max-w-[1600px] flex-col px-4 pt-4 sm:px-6 lg:px-10">
       <header className="mb-4 flex items-center gap-3">
         <button type="button" aria-label="Ajustes" onClick={() => nav("ajustes")} className="pv-num grid h-11 w-11 place-items-center text-[13px] font-bold" style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))", color: "var(--accent-fg)", borderRadius: 999, boxShadow: "var(--accent-glow)" }}>RR</button>
         <div>
@@ -358,7 +358,7 @@ function FeedShell({ children }: { children: ReactNode }) {
         <button type="button" aria-label="Buscar" onClick={() => openModal({ kind: "search" })} className="ml-auto grid h-10 w-10 place-items-center" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, color: "var(--muted)" }}><Search className="h-4 w-4" /></button>
         <button type="button" aria-label="Avisos" onClick={() => openModal({ kind: "notifications" })} className="grid h-10 w-10 place-items-center" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, color: "var(--muted)" }}><Bell className="h-4 w-4" /></button>
       </header>
-      <main className="flex-1">{children}</main>
+      <main className="flex-1 [&>*]:mx-auto [&>*]:w-full [&>*]:max-w-[900px] xl:[&>*]:max-w-[1100px] 2xl:[&>*]:max-w-[1400px]">{children}</main>
       <div className="sticky bottom-4 z-30 mt-4">
         <nav className="flex items-center justify-around px-2 py-2" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 26, boxShadow: "0 18px 40px -18px rgba(0,0,0,.55)", backdropFilter: "blur(14px)" }}>
           {NAV.slice(0, 3).map((n) => <FeedTab key={n.id} id={n.id} label={n.label} icon={ICON[n.icon]} active={n.id === current} onClick={() => nav(n.id)} />)}
@@ -400,18 +400,88 @@ function MobileHeader() {
 function MobileNav() {
   const { arch } = useArch();
   const { current, nav, newTx } = useNav();
-  const items: { id: NavId; label: string }[] = [{ id: "panel", label: "Panel" }, { id: "cuentas", label: "Cuentas" }, { id: "inversiones", label: "Cartera" }, { id: "categorias", label: "Categorías" }];
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const primary: { id: NavId; label: string }[] = [
+    { id: "panel", label: "Panel" },
+    { id: "cuentas", label: "Cuentas" },
+    { id: "inversiones", label: "Cartera" },
+  ];
+  /* El último acceso es un desplegable: Categorías, Gráficas y Ajustes. */
+  const extra: { id: NavId; label: string; icon: ReactNode }[] = [
+    { id: "categorias", label: "Categorías", icon: ICON.folder },
+    { id: "graficas", label: "Gráficas", icon: ICON.chart },
+    { id: "ajustes", label: "Ajustes", icon: ICON.settings },
+  ];
+  const activeExtra = extra.find((e) => e.id === current);
   const icon = (id: NavId) => ICON[NAV.find((n) => n.id === id)!.icon];
   const floating = arch.shell === "floating" || arch.shell === "dock" || arch.shell === "feed" || arch.shell === "appbar";
+  const goTo = (id: NavId) => {
+    setMenuOpen(false);
+    nav(id);
+  };
+
   return (
-    <nav className="absolute z-30 flex items-end justify-around" style={{ left: floating ? 14 : 0, right: floating ? 14 : 0, bottom: floating ? 14 : 0, padding: "8px 8px 10px", background: "var(--sidebar)", backdropFilter: "var(--blur)", borderTop: floating ? undefined : "1px solid var(--border)", border: floating ? "1px solid var(--border)" : undefined, borderRadius: floating ? 999 : 0, boxShadow: floating ? "0 20px 40px -20px rgba(0,0,0,.6)" : undefined }}>
-      {items.slice(0, 2).map((it) => (
-        <button key={it.id} type="button" onClick={() => nav(it.id)} className="flex flex-1 flex-col items-center gap-1 py-1" style={{ color: current === it.id ? "var(--accent)" : "var(--faint)" }}>{icon(it.id)}<span className="text-[10px] font-semibold">{it.label}</span></button>
-      ))}
-      <button type="button" onClick={newTx} className="-mt-6 grid h-12 w-12 place-items-center" style={{ background: "var(--accent)", color: "var(--accent-fg)", borderRadius: 999, boxShadow: "var(--accent-glow)" }} aria-label="Añadir registro"><Plus className="h-5 w-5" strokeWidth={2.8} /></button>
-      {items.slice(2).map((it) => (
-        <button key={it.id} type="button" onClick={() => nav(it.id)} className="flex flex-1 flex-col items-center gap-1 py-1" style={{ color: current === it.id ? "var(--accent)" : "var(--faint)" }}>{icon(it.id)}<span className="text-[10px] font-semibold">{it.label}</span></button>
-      ))}
-    </nav>
+    <>
+      {menuOpen && (
+        <div className="absolute inset-0 z-40" onClick={() => setMenuOpen(false)}>
+          <div className="absolute inset-0" style={{ background: "rgba(0,0,0,.45)", backdropFilter: "blur(2px)" }} />
+          <div
+            className="absolute p-1.5"
+            style={{
+              left: floating ? 14 : 10,
+              right: floating ? 14 : 10,
+              bottom: floating ? 84 : 76,
+              background: "var(--bg)",
+              border: "1px solid var(--border-strong)",
+              borderRadius: 18,
+              boxShadow: "0 -20px 50px -20px rgba(0,0,0,.75)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {extra.map((item) => {
+              const active = item.id === current;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => goTo(item.id)}
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] font-semibold"
+                  style={{ borderRadius: 12, color: active ? "var(--accent)" : "var(--text)", background: active ? "var(--accent-soft)" : "transparent" }}
+                >
+                  <span style={{ color: active ? "var(--accent)" : "var(--muted)" }}>{item.icon}</span>
+                  {item.label}
+                  {active && <Check className="ml-auto h-4 w-4" strokeWidth={3} />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <nav className="absolute z-30 flex items-end justify-around" style={{ left: floating ? 14 : 0, right: floating ? 14 : 0, bottom: floating ? 14 : 0, padding: "8px 8px 10px", background: "var(--sidebar)", backdropFilter: "var(--blur)", borderTop: floating ? undefined : "1px solid var(--border)", border: floating ? "1px solid var(--border)" : undefined, borderRadius: floating ? 999 : 0, boxShadow: floating ? "0 20px 40px -20px rgba(0,0,0,.6)" : undefined }}>
+        {primary.slice(0, 2).map((it) => (
+          <button key={it.id} type="button" onClick={() => goTo(it.id)} className="flex flex-1 flex-col items-center gap-1 py-1" style={{ color: current === it.id ? "var(--accent)" : "var(--faint)" }}>{icon(it.id)}<span className="text-[10px] font-semibold">{it.label}</span></button>
+        ))}
+        <button type="button" onClick={newTx} className="-mt-6 grid h-12 w-12 place-items-center" style={{ background: "var(--accent)", color: "var(--accent-fg)", borderRadius: 999, boxShadow: "var(--accent-glow)" }} aria-label="Añadir registro"><Plus className="h-5 w-5" strokeWidth={2.8} /></button>
+        <button type="button" onClick={() => goTo(primary[2].id)} className="flex flex-1 flex-col items-center gap-1 py-1" style={{ color: current === primary[2].id ? "var(--accent)" : "var(--faint)" }}>{icon(primary[2].id)}<span className="text-[10px] font-semibold">{primary[2].label}</span></button>
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="Más secciones: categorías, gráficas y ajustes"
+          className="flex flex-1 flex-col items-center gap-1 py-1"
+          style={{ color: activeExtra || menuOpen ? "var(--accent)" : "var(--faint)" }}
+        >
+          <span className="flex items-center gap-0.5">
+            {activeExtra ? activeExtra.icon : ICON.folder}
+            <ChevronUp className="h-3 w-3" strokeWidth={3} style={{ transform: menuOpen ? "rotate(180deg)" : undefined }} />
+          </span>
+          <span className="text-[10px] font-semibold">{activeExtra?.label ?? "Más"}</span>
+        </button>
+      </nav>
+    </>
   );
 }
+
