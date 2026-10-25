@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
-  ArrowLeftRight, Briefcase, Building2, Coins, Download, Landmark, Pencil, PiggyBank,
+  ArrowLeftRight, Briefcase, Building2, ChevronLeft, ChevronRight, Coins, Download, Landmark, Pencil, PiggyBank,
   Plus, RefreshCw, ShoppingCart, TrendingUp, Wallet,
 } from "lucide-react";
 import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, type Account, type Category, type Holding, type Tx } from "@/lib/mock";
@@ -136,15 +136,62 @@ const KIND_OPTIONS: { id: TxKind; label: string }[] = [
 ];
 const kindOf = (t: Tx): Exclude<TxKind, "todos"> => (t.categoryId === 0 ? "traspaso" : t.amount >= 0 ? "ingreso" : "gasto");
 
+/** Selector de páginas de una tabla (primera, última y alrededor de la actual). */
+function Pager({ page, pages, onChange }: { page: number; pages: number; onChange: (p: number) => void }) {
+  const items = useMemo(() => {
+    const set = new Set<number>([1, pages, page - 1, page, page + 1].filter((n) => n >= 1 && n <= pages));
+    const sorted = [...set].sort((a, b) => a - b);
+    const out: (number | "gap")[] = [];
+    let prev = 0;
+    for (const n of sorted) {
+      if (prev && n - prev > 1) out.push("gap");
+      out.push(n);
+      prev = n;
+    }
+    return out;
+  }, [page, pages]);
+
+  const base = "grid h-8 min-w-8 place-items-center px-2 text-[12px] font-semibold transition-colors disabled:opacity-40";
+  const style = (active: boolean): CSSProperties => ({
+    borderRadius: "var(--radius-sm)",
+    border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+    background: active ? "var(--accent)" : "var(--surface-2)",
+    color: active ? "var(--accent-fg)" : "var(--text)",
+  });
+
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-1.5" style={{ padding: "12px var(--pad) 4px" }}>
+      <button type="button" aria-label="Página anterior" className={base} style={style(false)} disabled={page <= 1} onClick={() => onChange(page - 1)}>
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      {items.map((it, i) =>
+        it === "gap" ? (
+          <span key={`gap-${i}`} className="pv-faint px-1 text-[12px]">…</span>
+        ) : (
+          <button key={it} type="button" aria-label={`Página ${it}`} aria-current={it === page ? "page" : undefined} className={`${base} pv-num`} style={style(it === page)} onClick={() => onChange(it)}>
+            {it}
+          </button>
+        ),
+      )}
+      <button type="button" aria-label="Página siguiente" className={base} style={style(false)} disabled={page >= pages} onClick={() => onChange(page + 1)}>
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 export function TxList({
   txs,
   limit,
+  pageSize,
   showAccount = true,
   filterable = true,
   fixedCategory = false,
 }: {
   txs: Tx[];
   limit?: number;
+  /** Filas por página; si se indica, la tabla se pagina con un selector de páginas. */
+  pageSize?: number;
   showAccount?: boolean;
   filterable?: boolean;
   /** La lista ya pertenece a una categoría: no se muestra el filtro de categoría */
@@ -167,7 +214,16 @@ export function TxList({
   }, [txs, accounts]);
 
   const filtered = visible.filter((t) => (kind === "todos" || kindOf(t) === kind) && (catId === "todas" || t.categoryId === catId));
-  const shown = limit ? filtered.slice(0, limit) : filtered;
+
+  /* Paginación opcional: como máximo `pageSize` filas por página. */
+  const [page, setPage] = useState(1);
+  const pages = pageSize ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
+  const current = Math.min(page, pages);
+  const shown = pageSize
+    ? filtered.slice((current - 1) * pageSize, current * pageSize)
+    : limit
+      ? filtered.slice(0, limit)
+      : filtered;
 
   /* Saldo resultante: sólo tiene sentido cuando toda la lista es de una cuenta. */
   const balances = useMemo(() => runningBalances(accounts, allTxs), [accounts, allTxs]);
@@ -236,6 +292,14 @@ export function TxList({
       )}
       {oneAccount && <p className="pv-faint text-[10.5px]" style={{ padding: "0 var(--pad) 6px" }}>El saldo bajo cada importe es el de la cuenta después de ese movimiento.</p>}
       <RowList items={rows} empty={txs.length ? "Ningún movimiento coincide con los filtros" : "Sin movimientos en este periodo"} />
+      {pageSize && filtered.length > 0 && (
+        <>
+          <Pager page={current} pages={pages} onChange={setPage} />
+          <p className="pv-faint text-center text-[11px]" style={{ padding: "0 var(--pad) 12px" }}>
+            {`${(current - 1) * pageSize + 1}–${Math.min(current * pageSize, filtered.length)} de ${filtered.length} movimientos · página ${current} de ${pages}`}
+          </p>
+        </>
+      )}
     </>
   );
 }
@@ -793,7 +857,7 @@ function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedde
         <div style={{ padding: "var(--pad)" }}>
           <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
         </div>
-        <TxList txs={txs} limit={isMobile ? 8 : 14} showAccount={false} />
+        <TxList txs={txs} pageSize={12} showAccount={false} />
       </Panel>
     </Stack>
     </Tinted>
@@ -906,7 +970,7 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
         <div style={{ padding: "var(--pad)" }}>
           <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
         </div>
-        <TxList txs={txs} limit={isMobile ? 8 : 14} showAccount={false} />
+        <TxList txs={txs} pageSize={12} showAccount={false} />
       </Panel>
     </Stack>
     </Tinted>

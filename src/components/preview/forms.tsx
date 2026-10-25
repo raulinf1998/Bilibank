@@ -11,7 +11,7 @@ import { chartColor, onColor, type ColorRef } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
 import { KIND_LABEL, PERIODS } from "@/lib/mock";
 import { inPeriod, periodLabel } from "@/lib/series";
-import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown } from "@/lib/market";
+import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown, todayIso } from "@/lib/market";
 import { isTransfer, transferEndpoints } from "@/lib/ledger";
 import { formatEUR, formatEUR0, formatFullDate, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, Segmented, Select } from "./primitives";
@@ -20,7 +20,8 @@ import { usePreview } from "./state";
 import { CAT_ICON, AccountDetailEmbedded, TxList, catIcon, useOpenAccount, useSpending } from "./views-main";
 import { PaletteEditorModal } from "./palette-editor";
 
-const today = "2026-02-24";
+/** Fecha por defecto de los formularios: el día real del calendario. */
+const todayIsoDate = (): string => todayIso();
 
 export function ModalHost() {
   const { modal, closeModal } = usePreview();
@@ -153,7 +154,7 @@ function TransactionForm({
   );
 
   const [amount, setAmount] = useState(editing ? String(Math.abs(editing.amount)) : "");
-  const [date, setDate] = useState(editing?.date ?? today);
+  const [date, setDate] = useState(editing?.date ?? todayIsoDate());
   const [concept, setConcept] = useState(editing ? (transferEdit ? baseConcept(editing.concept) : editing.concept) : "");
   const [note, setNote] = useState(editing?.note ?? "");
 
@@ -1232,7 +1233,7 @@ function OperationForm({ productId, operationId, onClose }: { productId: number;
   const [units, setUnits] = useState(existing ? String(existing.units) : "");
   const [price, setPrice] = useState(existing ? String(existing.price) : h ? String(h.price) : "");
   const [fees, setFees] = useState(existing ? String(existing.fees) : "1");
-  const [date, setDate] = useState(existing?.date ?? today);
+  const [date, setDate] = useState(existing?.date ?? todayIsoDate());
   const [confirmDel, setConfirmDel] = useState(false);
   if (!h) return null;
   const editing = Boolean(existing);

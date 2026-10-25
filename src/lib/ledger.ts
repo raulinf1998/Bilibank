@@ -75,6 +75,38 @@ export function runningBalances(accounts: Account[], transactions: Tx[]): Map<nu
   return out;
 }
 
+/**
+ * Borra un movimiento y devuelve el libro resultante.
+ * Si el apunte es un traspaso (`categoryId` 0) se eliminan SIEMPRE las dos
+ * patas —aunque la baja se pida desde una sola cuenta— y se revierten los
+ * saldos de las dos cuentas implicadas.
+ */
+export function removeTransaction(
+  tx: Tx,
+  transactions: Tx[],
+  accounts: Account[],
+): { transactions: Tx[]; accounts: Account[]; removed: number } {
+  const legs = isTransfer(tx)
+    ? transactions.filter(
+        (t) =>
+          t.id === tx.id ||
+          (t.categoryId === 0 &&
+            t.accountId !== tx.accountId &&
+            t.date === tx.date &&
+            Math.abs(t.amount + tx.amount) < 0.005),
+      )
+    : [tx];
+  const ids = new Set(legs.map((l) => l.id));
+  return {
+    transactions: transactions.filter((t) => !ids.has(t.id)),
+    accounts: accounts.map((a) => {
+      const delta = legs.filter((l) => l.accountId === a.id).reduce((sum, l) => sum + l.amount, 0);
+      return delta === 0 ? a : { ...a, balance: Math.round((a.balance - delta) * 100) / 100 };
+    }),
+    removed: legs.length,
+  };
+}
+
 /** ¿Todos los movimientos de la lista pertenecen a la misma cuenta? */
 export function singleAccount(transactions: Tx[]): number | null {
   if (!transactions.length) return null;
