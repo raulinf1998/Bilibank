@@ -929,7 +929,13 @@ export interface DesignConfig {
   donutKey: DonutKey;
   /** Estilo elegido para las tarjetas de cuenta (se guarda y se recuerda) */
   cardStyleKey: CardStyleKey;
+  /** Cuántas filas muestra la tabla «Últimas transacciones» del panel */
+  txLimit: TxLimit;
 }
+
+/** Cantidad de movimientos visibles en el panel (10 / 15 / 30 / 60). */
+export const TX_LIMITS = [10, 15, 30, 60] as const;
+export type TxLimit = (typeof TX_LIMITS)[number];
 
 export function configFromArchetype(key: string, device: DeviceKey = "desktop"): DesignConfig {
   const a = getArchetype(key);
@@ -945,6 +951,7 @@ export function configFromArchetype(key: string, device: DeviceKey = "desktop"):
     accentOverride: null,
     donutKey: "ring",
     cardStyleKey: "hielo",
+    txLimit: 10,
   };
 }
 
@@ -983,6 +990,7 @@ export function coerceConfig(payload: Record<string, unknown>): DesignConfig {
     accentOverride: typeof payload.accentOverride === "string" && isHexColor(payload.accentOverride) ? payload.accentOverride : null,
     donutKey: pick(payload.donutKey, Object.keys(DONUTS) as DonutKey[], "ring"),
     cardStyleKey: pick(payload.cardStyleKey, CARD_STYLE_KEYS, "hielo"),
+    txLimit: TX_LIMITS.includes(Number(payload.txLimit) as TxLimit) ? (Number(payload.txLimit) as TxLimit) : 10,
   };
 }
 

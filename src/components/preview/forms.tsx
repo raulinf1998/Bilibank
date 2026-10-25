@@ -53,7 +53,7 @@ export function ModalHost() {
     case "txDetail":
       return <TxDetailModal txId={modal.txId} onClose={closeModal} />;
     case "editTx":
-      return <EditTxModal key={`edit-${modal.txId}`} txId={modal.txId} onClose={closeModal} />;
+      return <TransactionForm key={`edit-${modal.txId}`} txId={modal.txId} onClose={closeModal} />;
     case "accountDetail":
       return <AccountDetailModal key={`acc-${modal.accountId}`} accountId={modal.accountId} onClose={closeModal} />;
     case "paletteEditor":
@@ -108,25 +108,54 @@ function AccountCard({ a, selected, onPick }: { a: Account; selected: boolean; o
   );
 }
 
-function TransactionForm({ accountId, categoryId: presetCategory, initialType = "gasto", onClose }: { accountId?: number; categoryId?: number; initialType?: TxType; onClose: () => void }) {
-  const { accounts, categories, addTransaction, addTransfer } = usePreview();
-  const [type, setType] = useState<TxType>(initialType);
+function TransactionForm({
+  accountId,
+  categoryId: presetCategory,
+  txId,
+  initialType = "gasto",
+  onClose,
+}: {
+  accountId?: number;
+  categoryId?: number;
+  /** Movimiento que se edita: se reutiliza el mismo formulario que al crear. */
+  txId?: number;
+  initialType?: TxType;
+  onClose: () => void;
+}) {
+  const { accounts, categories, transactions, addTransaction, updateTransaction, addTransfer, updateTransfer, deleteTransaction } = usePreview();
+  const editing = txId === undefined ? undefined : transactions.find((t) => t.id === txId);
+  const transferEdit = editing ? editing.categoryId === 0 : false;
+  const ends = editing && transferEdit ? transferEndpoints(editing, transactions, accounts) : null;
+
+  const [type, setType] = useState<TxType>(
+    editing ? (transferEdit ? "traspaso" : editing.amount >= 0 ? "ingreso" : "gasto") : initialType,
+  );
   const tone = TONE[type];
 
-  const [accId, setAccId] = useState(accountId ?? accounts.find((a) => a.kind === "corriente")?.id ?? accounts[0].id);
-  const [fromId, setFromId] = useState(accountId ?? accounts[0]?.id ?? 1);
-  const [toId, setToId] = useState(accounts.find((a) => a.id !== (accountId ?? accounts[0]?.id))?.id ?? accounts[1]?.id ?? 2);
+  const firstAccount = accounts.find((a) => a.kind === "corriente" && !a.archived) ?? accounts[0];
+  const [accId, setAccId] = useState(editing?.accountId ?? accountId ?? firstAccount?.id ?? 1);
+  const [fromId, setFromId] = useState(
+    ends?.from?.id ?? (editing && transferEdit ? editing.accountId : accountId ?? firstAccount?.id ?? 1),
+  );
+  const [toId, setToId] = useState(
+    ends?.to?.id ?? accounts.find((a) => a.id !== (accountId ?? firstAccount?.id))?.id ?? accounts[1]?.id ?? 2,
+  );
 
   const catsForType = categories.filter((c) => (type === "ingreso" ? c.kind === "ingreso" : c.kind === "gasto"));
-  const initialCat = categories.find((c) => c.id === presetCategory && c.kind === "gasto") ?? catsForType[0];
+  const initialCat =
+    editing && !transferEdit
+      ? categories.find((c) => c.id === editing.categoryId) ?? catsForType[0]
+      : categories.find((c) => c.id === presetCategory && c.kind === "gasto") ?? catsForType[0];
   const [categoryId, setCategoryId] = useState<number | null>(initialCat?.id ?? null);
   const category = categories.find((c) => c.id === categoryId) ?? null;
-  const [subcategoryId, setSubcategoryId] = useState<number | null>(initialCat?.subcategories[0]?.id ?? null);
+  const [subcategoryId, setSubcategoryId] = useState<number | null>(
+    editing && !transferEdit ? editing.subcategoryId : initialCat?.subcategories[0]?.id ?? null,
+  );
 
-  const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(today);
-  const [concept, setConcept] = useState("");
-  const [note, setNote] = useState("");
+  const [amount, setAmount] = useState(editing ? String(Math.abs(editing.amount)) : "");
+  const [date, setDate] = useState(editing?.date ?? today);
+  const [concept, setConcept] = useState(editing ? (transferEdit ? baseConcept(editing.concept) : editing.concept) : "");
+  const [note, setNote] = useState(editing?.note ?? "");
 
   const changeType = (t: TxType) => {
     setType(t);
@@ -142,21 +171,61 @@ function TransactionForm({ accountId, categoryId: presetCategory, initialType = 
     setSubcategoryId(c.subcategories[0]?.id ?? null);
   };
 
+  /* Las cuentas de inversión no se ofrecen para gastos e ingresos: sólo se
+     mueven con traspasos (y con las compras de productos dentro de la app).
+     La cuenta ya elegida sigue visible para no romper una edición. */
+  const pickable = (current: number[]) =>
+    accounts.filter((a) => (!a.archived && (type === "traspaso" || a.kind === "corriente")) || current.includes(a.id));
+
   const amountValid = Number(amount) > 0;
   const valid = type === "traspaso" ? amountValid && fromId !== toId : amountValid && Boolean(category) && Boolean(subcategoryId);
 
+  const subName = category?.subcategories.find((s) => s.id === subcategoryId)?.name;
+  const conceptText = concept.trim();
+
   const submit = () => {
     if (!valid) return;
-    if (type === "traspaso") {
-      addTransfer(fromId, toId, Number(amount), date, concept.trim() || "Traspaso");
+    const value = Math.abs(Number(amount));
+
+    if (editing) {
+      if (type === "traspaso") {
+        if (transferEdit) {
+          updateTransfer(editing.id, { from: fromId, to: toId, amount: value, date, concept: conceptText || "Traspaso" });
+        } else {
+          deleteTransaction(editing.id);
+          addTransfer(fromId, toId, value, date, conceptText || "Traspaso");
+        }
+      } else if (category) {
+        const next: Omit<Tx, "id"> = {
+          date,
+          concept: conceptText || subName || category.name,
+          categoryId: category.id,
+          subcategoryId: subcategoryId ?? category.subcategories[0]?.id ?? 0,
+          accountId: accId,
+          amount: type === "gasto" ? -value : value,
+          tags: editing.tags,
+          note: note.trim() || undefined,
+        };
+        if (transferEdit) {
+          /* Cambio de traspaso a gasto/ingreso: se quitan las dos patas y se crea el movimiento. */
+          const pairId = ends?.pairId;
+          deleteTransaction(editing.id);
+          if (pairId !== undefined) deleteTransaction(pairId);
+          addTransaction(next);
+        } else {
+          updateTransaction(editing.id, next);
+        }
+      }
+    } else if (type === "traspaso") {
+      addTransfer(fromId, toId, value, date, conceptText || "Traspaso");
     } else if (category) {
       addTransaction({
         date,
-        concept: concept.trim() || (category.subcategories.find((s) => s.id === subcategoryId)?.name ?? category.name),
+        concept: conceptText || subName || category.name,
         categoryId: category.id,
         subcategoryId: subcategoryId ?? category.subcategories[0]?.id ?? 0,
         accountId: accId,
-        amount: type === "gasto" ? -Math.abs(Number(amount)) : Math.abs(Number(amount)),
+        amount: type === "gasto" ? -value : value,
         note: note.trim() || undefined,
       });
     }
@@ -164,14 +233,20 @@ function TransactionForm({ accountId, categoryId: presetCategory, initialType = 
   };
 
   return (
-    <Modal title="Nueva transacción" onClose={onClose} width={580} footer={
-      <>
-        <Btn variant="ghost" onClick={onClose} full>Cancelar</Btn>
-        <Btn onClick={submit} disabled={!valid} tone={tone} full icon={<Check className="h-3.5 w-3.5" strokeWidth={3} />}>
-          Guardar {TYPE_LABEL[type].toLowerCase()}
-        </Btn>
-      </>
-    }>
+    <Modal
+      title={editing ? (transferEdit ? "Editar traspaso" : "Editar transacción") : "Nueva transacción"}
+      sub={editing ? "Los saldos de las cuentas se recalculan al guardar" : undefined}
+      onClose={onClose}
+      width={580}
+      footer={
+        <>
+          <Btn variant="ghost" onClick={onClose} full>Cancelar</Btn>
+          <Btn onClick={submit} disabled={!valid} tone={tone} full icon={<Check className="h-3.5 w-3.5" strokeWidth={3} />}>
+            {editing ? "Guardar cambios" : `Guardar ${TYPE_LABEL[type].toLowerCase()}`}
+          </Btn>
+        </>
+      }
+    >
       <div className="flex flex-col gap-5">
         <div className="grid grid-cols-3 gap-1.5 p-1" style={{ background: "var(--surface-2)", borderRadius: "var(--radius)" }}>
           {(["gasto", "ingreso", "traspaso"] as TxType[]).map((t) => {
@@ -197,11 +272,11 @@ function TransactionForm({ accountId, categoryId: presetCategory, initialType = 
           <div className="flex flex-col gap-4">
             <div>
               <span className="pv-muted mb-2 block text-[11px] font-bold uppercase tracking-[0.1em]">Desde</span>
-              <div className="grid grid-cols-3 gap-2">{accounts.map((a) => <AccountCard key={a.id} a={a} selected={fromId === a.id} onPick={() => setFromId(a.id)} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([fromId]).map((a) => <AccountCard key={a.id} a={a} selected={fromId === a.id} onPick={() => setFromId(a.id)} />)}</div>
             </div>
             <div>
               <span className="pv-muted mb-2 block text-[11px] font-bold uppercase tracking-[0.1em]">Hacia</span>
-              <div className="grid grid-cols-3 gap-2">{accounts.map((a) => <AccountCard key={a.id} a={a} selected={toId === a.id} onPick={() => setToId(a.id)} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([toId]).map((a) => <AccountCard key={a.id} a={a} selected={toId === a.id} onPick={() => setToId(a.id)} />)}</div>
             </div>
             <Field label="Concepto"><Input placeholder="Aportación mensual…" value={concept} onChange={(e) => setConcept(e.target.value)} /></Field>
           </div>
@@ -210,9 +285,9 @@ function TransactionForm({ accountId, categoryId: presetCategory, initialType = 
             <div>
               <div className="mb-2 flex items-baseline justify-between">
                 <span className="pv-muted text-[11px] font-bold uppercase tracking-[0.1em]">Cuenta</span>
-                <span className="pv-faint text-[11px]">{accounts.length} cuentas</span>
+                <span className="pv-faint text-[11px]">{pickable([accId]).length} cuentas</span>
               </div>
-              <div className="grid grid-cols-3 gap-2">{accounts.map((a) => <AccountCard key={a.id} a={a} selected={accId === a.id} onPick={() => setAccId(a.id)} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([accId]).map((a) => <AccountCard key={a.id} a={a} selected={accId === a.id} onPick={() => setAccId(a.id)} />)}</div>
             </div>
 
             <div>
@@ -262,7 +337,13 @@ function TransactionForm({ accountId, categoryId: presetCategory, initialType = 
           <DateField value={date} onChange={setDate} />
           <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
             <StickyNote className="h-4 w-4 shrink-0" style={{ color: "var(--faint)" }} />
-            <input value={concept && type !== "traspaso" ? concept : note} onChange={(e) => (type === "traspaso" ? setConcept(e.target.value) : setNote(e.target.value))} placeholder={type === "traspaso" ? "Concepto (opcional)" : "Nota (opcional)"} className="w-full bg-transparent text-[12.5px] outline-none" style={{ color: "var(--text)" }} />
+            <input
+              value={type === "traspaso" ? concept : note}
+              onChange={(e) => (type === "traspaso" ? setConcept(e.target.value) : setNote(e.target.value))}
+              placeholder={type === "traspaso" ? "Concepto (opcional)" : "Nota (opcional)"}
+              className="w-full bg-transparent text-[12.5px] outline-none"
+              style={{ color: "var(--text)" }}
+            />
           </div>
         </div>
       </div>
@@ -405,117 +486,9 @@ function TxDetailModal({ txId, onClose }: { txId: number; onClose: () => void })
 
 /* ------------------------------ Editar movimiento ------------------------------ */
 
+/** Concepto base de un traspaso, sin la flecha de origen → destino. */
 function baseConcept(concept: string): string {
   return concept.split(" → ")[0].split(" ← ")[0];
-}
-
-function EditTxModal({ txId, onClose }: { txId: number; onClose: () => void }) {
-  const { transactions } = usePreview();
-  const tx = transactions.find((t) => t.id === txId);
-  if (!tx) return null;
-  return tx.categoryId === 0 ? <EditTransferModal tx={tx} onClose={onClose} /> : <EditMovementModal tx={tx} onClose={onClose} />;
-}
-
-function EditMovementModal({ tx, onClose }: { tx: Tx; onClose: () => void }) {
-  const { accounts, categories, updateTransaction } = usePreview();
-  const [type, setType] = useState<"gasto" | "ingreso">(tx.amount >= 0 ? "ingreso" : "gasto");
-  const [concept, setConcept] = useState(tx.concept);
-  const [amount, setAmount] = useState(String(Math.abs(tx.amount)));
-  const [date, setDate] = useState(tx.date);
-  const [accountId, setAccountId] = useState(tx.accountId);
-  const [categoryId, setCategoryId] = useState(tx.categoryId);
-  const [subcategoryId, setSubcategoryId] = useState(tx.subcategoryId);
-  const [note, setNote] = useState(tx.note ?? "");
-
-  const catsForType = categories.filter((c) => (type === "ingreso" ? c.kind === "ingreso" : c.kind === "gasto"));
-  const category = categories.find((c) => c.id === categoryId) ?? null;
-
-  const changeType = (t: "gasto" | "ingreso") => {
-    setType(t);
-    const list = categories.filter((c) => (t === "ingreso" ? c.kind === "ingreso" : c.kind === "gasto"));
-    if (!list.some((c) => c.id === categoryId)) {
-      setCategoryId(list[0]?.id ?? 0);
-      setSubcategoryId(list[0]?.subcategories[0]?.id ?? 0);
-    }
-  };
-
-  const valid = Number(amount) > 0 && concept.trim().length > 0 && categoryId > 0 && subcategoryId > 0;
-
-  const submit = () => {
-    if (!valid) return;
-    updateTransaction(tx.id, {
-      date,
-      concept: concept.trim(),
-      categoryId,
-      subcategoryId,
-      accountId,
-      amount: type === "gasto" ? -Math.abs(Number(amount)) : Math.abs(Number(amount)),
-      tags: tx.tags,
-      note: note.trim() || undefined,
-    });
-    onClose();
-  };
-
-  return (
-    <Modal title="Editar movimiento" sub="Los saldos de las cuentas se recalculan al guardar" onClose={onClose} width={520} footer={<><Btn variant="ghost" onClick={onClose}>Cancelar</Btn><Btn onClick={submit} disabled={!valid}>Guardar cambios</Btn></>}>
-      <div className="flex flex-col gap-3.5">
-        <Segmented options={[{ id: "gasto", label: "Gasto" }, { id: "ingreso", label: "Ingreso" }]} value={type} onChange={changeType} />
-        <Field label="Concepto"><Input value={concept} onChange={(e) => setConcept(e.target.value)} autoFocus /></Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Importe (€)"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(",", "."))} /></Field>
-          <Field label="Fecha"><DateField value={date} onChange={setDate} /></Field>
-        </div>
-        <Field label="Cuenta">
-          <Select value={accountId} onChange={(e) => setAccountId(Number(e.target.value))}>
-            <optgroup label="Cuentas corrientes">{accounts.filter((a) => a.kind === "corriente" && !a.archived).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</optgroup>
-            <optgroup label="Cuentas de inversión">{accounts.filter((a) => a.kind === "inversion" && !a.archived).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</optgroup>
-          </Select>
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Categoría">
-            <Select value={categoryId} onChange={(e) => { const id = Number(e.target.value); setCategoryId(id); setSubcategoryId(categories.find((c) => c.id === id)?.subcategories[0]?.id ?? 0); }}>
-              {catsForType.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
-          </Field>
-          <Field label="Subcategoría">
-            <Select value={subcategoryId} onChange={(e) => setSubcategoryId(Number(e.target.value))}>
-              {(category?.subcategories ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </Select>
-          </Field>
-        </div>
-        <Field label="Nota"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Opcional" /></Field>
-      </div>
-    </Modal>
-  );
-}
-
-function EditTransferModal({ tx, onClose }: { tx: Tx; onClose: () => void }) {
-  const { accounts, transactions, updateTransfer } = usePreview();
-  const sib = transactions.find((t) => t.id !== tx.id && t.categoryId === 0 && t.accountId !== tx.accountId && t.date === tx.date && t.amount === -tx.amount);
-  const fromLeg = tx.amount < 0 ? tx : sib;
-  const toLeg = tx.amount < 0 ? sib : tx;
-  const [fromId, setFromId] = useState(fromLeg?.accountId ?? tx.accountId);
-  const [toId, setToId] = useState(toLeg?.accountId ?? accounts.find((a) => a.id !== tx.accountId)?.id ?? tx.accountId);
-  const [amount, setAmount] = useState(String(Math.abs(tx.amount)));
-  const [date, setDate] = useState(tx.date);
-  const [concept, setConcept] = useState(baseConcept(tx.concept));
-  const valid = Number(amount) > 0 && fromId !== toId;
-
-  return (
-    <Modal title="Editar traspaso" sub="Se actualizan las dos patas (salida y entrada)" onClose={onClose} width={520} footer={<><Btn variant="ghost" onClick={onClose}>Cancelar</Btn><Btn disabled={!valid} onClick={() => { updateTransfer(tx.id, { from: fromId, to: toId, amount: Number(amount), date, concept: concept.trim() || "Traspaso" }); onClose(); }}>Guardar cambios</Btn></>}>
-      <div className="flex flex-col gap-3.5">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Desde"><Select value={fromId} onChange={(e) => setFromId(Number(e.target.value))}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></Field>
-          <Field label="Hacia"><Select value={toId} onChange={(e) => setToId(Number(e.target.value))}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Importe (€)"><Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(",", "."))} autoFocus /></Field>
-          <Field label="Fecha"><DateField value={date} onChange={setDate} /></Field>
-        </div>
-        <Field label="Concepto"><Input value={concept} onChange={(e) => setConcept(e.target.value)} /></Field>
-      </div>
-    </Modal>
-  );
 }
 
 /* ------------------------------ Buscar ------------------------------ */

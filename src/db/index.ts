@@ -36,6 +36,7 @@ export function ensureSchema(): Promise<void> {
   globalForMigrations.__arenaNextJsPostgresqlMigrations ??= (async () => {
     try {
       await pool.query("ALTER TABLE design_preferences ADD COLUMN IF NOT EXISTS card_style_key text");
+      await pool.query("ALTER TABLE design_preferences ADD COLUMN IF NOT EXISTS tx_limit integer");
     } catch {
       // La tabla aún no existe (primer arranque): init.sql la creará completa.
     }

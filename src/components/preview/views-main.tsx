@@ -10,7 +10,7 @@ import { CAT_ICON, iconNode } from "@/lib/icons";
 import { countryDistribution, countryTop5, holdingPath, monthlyContributions, sectorDistribution, type ContribResult, type MapEntry } from "@/lib/investing";
 import { WorldMap } from "./worldmap";
 import { PeriodBar } from "./periodbar";
-import type { CardStyleKey, ChartStyleKey } from "@/lib/themes";
+import { TX_LIMITS, type CardStyleKey, type ChartStyleKey, type DesignConfig } from "@/lib/themes";
 import { chartColor, onColor, type ColorRef } from "@/lib/colors";
 import { FULL_DAYS, TODAY, addDays, periodRange, bucketLabels, changePct, expandSeries, flowsFor, inPeriod, periodDays, periodLabel, periodMonths, periodShort, periodStart, sampleAtBuckets, windowSeries } from "@/lib/series";
 import { formatEUR, formatEUR0, formatNum, formatPct, formatDate, formatFullDate, formatSigned } from "@/lib/format";
@@ -245,13 +245,21 @@ export function TxList({
 ================================================================== */
 
 export function PanelView() {
-  const { arch, isMobile } = useArch();
+  const { arch, cfg, isMobile, patchConfig } = useArch();
   const { accounts, transactions, period, setPeriod, go, openModal } = usePreview();
   const sp = useSpending();
   const t = useTotals();
   const openAccount = useOpenAccount();
   const cs = arch.chartStyle;
   const bento = arch.kpi === "tile";
+  /* Cuántos movimientos enseña la tabla: se recuerda junto con el diseño. */
+  const [localLimit, setLocalLimit] = useState<number | null>(null);
+  const txLimit = localLimit ?? cfg.txLimit;
+  const setTxLimit = (v: string) => {
+    const n = Number(v);
+    setLocalLimit(n);
+    patchConfig?.({ txLimit: n as DesignConfig["txLimit"] });
+  };
   const editorial = arch.surface === "none";
 
   const pat = windowSeries(t.pat, period);
@@ -353,11 +361,23 @@ export function PanelView() {
   const txPanel = (
     <Panel pad={false} span={bento ? "xl:col-span-2" : "xl:col-span-3"}>
       <div style={{ padding: "var(--pad)" }}>
-        <SectionTitle sub={`${txInPeriod.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "tx" })}>Nuevo</Btn>}>
+        <SectionTitle
+          sub={`${txInPeriod.length} movimientos · ${periodLabel(period).toLowerCase()}`}
+          action={
+            <div className="flex shrink-0 items-center gap-2">
+              <Segmented
+                options={TX_LIMITS.map((n) => ({ id: String(n), label: String(n) }))}
+                value={String(txLimit)}
+                onChange={setTxLimit}
+              />
+              {!isMobile && <Btn size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "tx" })}>Nuevo</Btn>}
+            </div>
+          }
+        >
           Últimas transacciones
         </SectionTitle>
       </div>
-      <TxList txs={txInPeriod} limit={isMobile ? 5 : 7} />
+      <TxList txs={txInPeriod} limit={txLimit} />
     </Panel>
   );
 

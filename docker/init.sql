@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS design_preferences (
   accent_override text,
   donut_key text,
   card_style_key text,
+  tx_limit integer,
   mode text NOT NULL DEFAULT 'dark',
   font_key text,
   chart_style_key text,
@@ -21,6 +22,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS design_preferences_single_row ON design_prefer
 
 -- Migración para instalaciones anteriores: el estilo de tarjeta se añadió después.
 ALTER TABLE design_preferences ADD COLUMN IF NOT EXISTS card_style_key text;
+ALTER TABLE design_preferences ADD COLUMN IF NOT EXISTS tx_limit integer;
 
 CREATE TABLE IF NOT EXISTS theme_feedback (
   id serial PRIMARY KEY,

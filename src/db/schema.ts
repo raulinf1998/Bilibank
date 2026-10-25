@@ -24,6 +24,8 @@ export const designPreferences = pgTable(
     donutKey: text("donut_key"),
     /** Estilo de las tarjetas de cuenta (hielo, cristal, mate, neón…) */
     cardStyleKey: text("card_style_key"),
+    /** Filas de la tabla «Últimas transacciones» (10, 15, 30 o 60) */
+    txLimit: integer("tx_limit"),
     mode: text("mode").notNull().default("dark"),
     fontKey: text("font_key"),
     chartStyleKey: text("chart_style_key"),
