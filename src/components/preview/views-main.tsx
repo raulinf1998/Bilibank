@@ -3,9 +3,9 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeftRight, Briefcase, Building2, ChevronLeft, ChevronRight, Coins, Download, Landmark, Pencil, PiggyBank,
-  Plus, RefreshCw, ShoppingCart, TrendingUp, Wallet,
+  Plus, RefreshCw, Search, ShoppingCart, TrendingUp, Wallet,
 } from "lucide-react";
-import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, type Account, type Category, type Holding, type Tx } from "@/lib/mock";
+import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, subColor, subIconKey, type Account, type Category, type Holding, type Tx } from "@/lib/mock";
 import { CAT_ICON, iconNode } from "@/lib/icons";
 import { countryDistribution, countryTop5, holdingPath, monthlyContributions, sectorDistribution, type ContribResult, type MapEntry } from "@/lib/investing";
 import { WorldMap } from "./worldmap";
@@ -240,8 +240,11 @@ export function TxList({
     const balance = oneAccount ? balances.get(tx.id) : undefined;
     return {
       id: tx.id,
-      icon: transfer ? <ArrowLeftRight className="h-4 w-4" /> : catIcon(cat),
-      colorIdx: transfer ? (tx.amount >= 0 ? 1 : 10) : tx.amount >= 0 ? 3 : cat?.colorIdx ?? 5,
+      /* Icono y color de la subcategoría (los de la categoría si no tiene). */
+      icon: transfer ? <ArrowLeftRight className="h-4 w-4" /> : subc ? iconNode(subIconKey(subc)) : catIcon(cat),
+      colorIdx: transfer
+        ? tx.amount >= 0 ? 1 : 10
+        : (cat && subc ? subColor(cat, subc) : cat?.colorIdx) ?? (tx.amount >= 0 ? 6 : 5),
       title: transfer ? "Traspaso entre cuentas" : tx.concept,
       sub: transfer
         ? `${formatDate(tx.date)}${ends?.from && ends?.to ? ` · ${transferName}` : ""}`
@@ -274,22 +277,34 @@ export function TxList({
   });
   return (
     <>
-      {filterable && (
-        <div className="flex flex-wrap items-center gap-2" style={{ padding: "0 var(--pad) 10px" }}>
-          <Segmented options={KIND_OPTIONS} value={kind} onChange={setKind} />
-          {!fixedCategory && (
-            <div className="w-[200px] max-w-full">
-              <Select value={catId} onChange={(e) => setCatId(e.target.value === "todas" ? "todas" : Number(e.target.value))} aria-label="Filtrar por categoría">
-                <option value="todas">Todas las categorías</option>
-                {presentCats.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </Select>
-            </div>
-          )}
-          <span className="pv-faint ml-auto text-[11px]">{filtered.length} de {visible.length}</span>
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-2" style={{ padding: "0 var(--pad) 10px" }}>
+        {filterable && (
+          <>
+            <Segmented options={KIND_OPTIONS} value={kind} onChange={setKind} />
+            {!fixedCategory && (
+              <div className="w-[200px] max-w-full">
+                <Select value={catId} onChange={(e) => setCatId(e.target.value === "todas" ? "todas" : Number(e.target.value))} aria-label="Filtrar por categoría">
+                  <option value="todas">Todas las categorías</option>
+                  {presentCats.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </Select>
+              </div>
+            )}
+            <span className="pv-faint text-[11px]">{filtered.length} de {visible.length}</span>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={() => openModal({ kind: "amountSearch" })}
+          aria-label="Buscar movimientos por cantidad"
+          title="Buscar movimientos por cantidad"
+          className="pv-hit ml-auto grid h-8 w-8 shrink-0 place-items-center transition-colors hover:!border-[var(--accent)]"
+          style={{ color: "var(--muted)", border: "1px solid var(--border)", borderRadius: "var(--radius-pill)" }}
+        >
+          <Search className="h-4 w-4" />
+        </button>
+      </div>
       {oneAccount && <p className="pv-faint text-[10.5px]" style={{ padding: "0 var(--pad) 6px" }}>El saldo bajo cada importe es el de la cuenta después de ese movimiento.</p>}
       <RowList items={rows} empty={txs.length ? "Ningún movimiento coincide con los filtros" : "Sin movimientos en este periodo"} />
       {pageSize && filtered.length > 0 && (
