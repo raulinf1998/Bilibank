@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Database, Download, FileArchive, Globe, KeyRound, ListTree, LoaderCircle, Palette, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Tag, Trash2, TriangleAlert, Upload, Check, X } from "lucide-react";
+import { ChevronRight, Database, Download, FileArchive, Globe, KeyRound, ListTree, LoaderCircle, Palette, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, TableProperties, Tag, Trash2, TriangleAlert, Upload, Check, X } from "lucide-react";
 import { strFromU8, unzipSync } from "fflate";
 import { buildSnapshot, type ImportSummary } from "@/lib/moneymatter";
 import { PERIODS, holdingValue, subColor } from "@/lib/mock";
@@ -978,6 +978,7 @@ export function SettingsView() {
           <SectionTitle sub="Copias de seguridad y restauración">Datos</SectionTitle>
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
           <SettingRow icon={<ShieldCheck className="h-4 w-4" />} colorIdx={3} title="Descargar copia de seguridad" hint="Cuentas, categorías, productos y movimientos en JSON" right={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => downloadFile("mi-patrimonio-copia.json", exportData(), "application/json")}>Descargar</Btn>} />
+          <SettingRow icon={<TableProperties className="h-4 w-4" />} colorIdx={8} title="Exportar todos los datos en CSV" hint="Cuentas, categorías, movimientos, traspasos, inversiones y operaciones · ZIP o archivo a archivo" right={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "exportCsv" })}>Exportar CSV</Btn>} />
           <SettingRow icon={<Database className="h-4 w-4" />} colorIdx={1} title="Importar / restaurar datos" hint="Carga una copia descargada desde aquí" right={<Btn variant="ghost" size="sm" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => fileRef.current?.click()}>Importar</Btn>} />
           <MoneyMatterImport />
           <SettingRow icon={<RotateCcw className="h-4 w-4" />} colorIdx={4} title="Restablecer datos de ejemplo" hint="Vuelve a las 10 cuentas, 8 categorías y 10 productos iniciales" right={<Btn variant="ghost" size="sm" onClick={resetData}>Restablecer</Btn>} />

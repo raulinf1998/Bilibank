@@ -52,6 +52,7 @@ export type ModalKind =
   | { kind: "paletteEditor"; key?: string }
   | { kind: "search" }
   | { kind: "amountSearch"; amount?: number }
+  | { kind: "exportCsv" }
   | { kind: "notifications" }
   | { kind: "confirmClear" }
   | { kind: "organizeCategories"; categoryId?: number };
