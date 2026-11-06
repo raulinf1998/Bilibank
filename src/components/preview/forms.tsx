@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import type { Account, AccountKind, Category, Holding, Operation, Tx } from "@/lib/mock";
 import { HOLDING_CATEGORIES, type HoldingCategory } from "@/lib/mock";
-import { subColor } from "@/lib/mock";
+import { subColor, subIconKey } from "@/lib/mock";
 import { chartColor, onColor, type ColorRef } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
 import { KIND_LABEL, PERIODS } from "@/lib/mock";
@@ -14,7 +14,7 @@ import { inPeriod, periodLabel } from "@/lib/series";
 import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown, todayIso } from "@/lib/market";
 import { isTransfer, transferEndpoints } from "@/lib/ledger";
 import { formatEUR, formatEUR0, formatFullDate, formatSigned } from "@/lib/format";
-import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, Segmented, Select } from "./primitives";
+import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, RowList, Segmented, Select } from "./primitives";
 import { DateField } from "./datefield";
 import { usePreview } from "./state";
 import { CAT_ICON, AccountDetailEmbedded, TxList, catIcon, useOpenAccount, useSpending } from "./views-main";
@@ -28,7 +28,7 @@ export function ModalHost() {
   if (!modal) return null;
   switch (modal.kind) {
     case "tx":
-      return <TransactionForm key="tx" accountId={modal.accountId} categoryId={modal.categoryId} initialType="gasto" onClose={closeModal} />;
+      return <TransactionForm key="tx" accountId={modal.accountId} categoryId={modal.categoryId} presetAmount={modal.amount} initialType="gasto" onClose={closeModal} />;
     case "transfer":
       return <TransactionForm key="tr" initialType="traspaso" onClose={closeModal} />;
     case "account":
@@ -61,6 +61,8 @@ export function ModalHost() {
       return <PaletteEditorModal key={`pal-${modal.key ?? "new"}`} paletteKey={modal.key} onClose={closeModal} />;
     case "search":
       return <SearchModal onClose={closeModal} />;
+    case "amountSearch":
+      return <AmountSearchModal key={`amt-${modal.amount ?? "new"}`} initial={modal.amount} onClose={closeModal} />;
     case "notifications":
       return <NotificationsModal onClose={closeModal} />;
     case "confirmClear":
@@ -113,6 +115,7 @@ function TransactionForm({
   accountId,
   categoryId: presetCategory,
   txId,
+  presetAmount,
   initialType = "gasto",
   onClose,
 }: {
@@ -120,6 +123,8 @@ function TransactionForm({
   categoryId?: number;
   /** Movimiento que se edita: se reutiliza el mismo formulario que al crear. */
   txId?: number;
+  /** Importe ya relleno (por ejemplo, al crear desde el buscador por cantidad). */
+  presetAmount?: number;
   initialType?: TxType;
   onClose: () => void;
 }) {
@@ -153,7 +158,9 @@ function TransactionForm({
     editing && !transferEdit ? editing.subcategoryId : initialCat?.subcategories[0]?.id ?? null,
   );
 
-  const [amount, setAmount] = useState(editing ? String(Math.abs(editing.amount)) : "");
+  const [amount, setAmount] = useState(
+    editing ? String(Math.abs(editing.amount)) : presetAmount ? String(presetAmount).replace(".", ",") : "",
+  );
   const [date, setDate] = useState(editing?.date ?? todayIsoDate());
   const [concept, setConcept] = useState(editing ? (transferEdit ? baseConcept(editing.concept) : editing.concept) : "");
   const [note, setNote] = useState(editing?.note ?? "");
@@ -490,6 +497,229 @@ function TxDetailModal({ txId, onClose }: { txId: number; onClose: () => void })
 /** Concepto base de un traspaso, sin la flecha de origen → destino. */
 function baseConcept(concept: string): string {
   return concept.split(" → ")[0].split(" ← ")[0];
+}
+
+/* ------------------------------ Buscar por cantidad ------------------------------ */
+
+/**
+ * Buscador de movimientos por importe: escribe una cantidad y aparecen todos
+ * los apuntes con ese importe (se compara el valor absoluto, así que 50 €
+ * encuentra tanto un gasto de 50 € como un ingreso de 50 €). Si no hay
+ * coincidencia exacta se ofrecen los importes más cercanos.
+ */
+function AmountSearchModal({ initial, onClose }: { initial?: number; onClose: () => void }) {
+  const { transactions, categories, accounts, openModal } = usePreview();
+  const [raw, setRaw] = useState(initial ? String(initial).replace(".", ",") : "");
+  const [scope, setScope] = useState<"todos" | "gasto" | "ingreso" | "traspaso">("todos");
+  /* Cantidades similares: 32 muestra también todo lo que va de 32,00 a 32,99. */
+  const [similar, setSimilar] = useState(false);
+
+  const amount = Number(raw.replace(",", "."));
+  const hasAmount = raw.trim() !== "" && Number.isFinite(amount) && amount > 0;
+
+  /* Tramo de un euro completo: con 32 → [32,00 ; 32,99]. */
+  const euro = Math.floor(amount);
+  const rangeFrom = euro;
+  const rangeTo = Math.round((euro + 0.99) * 100) / 100;
+
+  const pool = useMemo(
+    () =>
+      transactions.filter((t) => {
+        if (scope === "todos") return true;
+        if (scope === "traspaso") return isTransfer(t);
+        if (isTransfer(t)) return false;
+        return scope === "ingreso" ? t.amount > 0 : t.amount < 0;
+      }),
+    [transactions, scope],
+  );
+
+  const at = (v: number) => Math.round(v * 100) / 100;
+  const matches = useMemo(() => {
+    if (!hasAmount) return [];
+    return pool.filter((t) => {
+      const value = at(Math.abs(t.amount));
+      if (!similar) return Math.abs(value - amount) < 0.005;
+      return value >= rangeFrom - 0.0001 && value <= rangeTo + 0.0001;
+    });
+  }, [pool, amount, hasAmount, similar, rangeFrom, rangeTo]);
+
+  const exactCount = useMemo(
+    () => (hasAmount ? pool.filter((t) => Math.abs(at(Math.abs(t.amount)) - amount) < 0.005).length : 0),
+    [pool, amount, hasAmount],
+  );
+
+  /** Importes distintos más próximos, para cuando no hay coincidencia exacta. */
+  const closest = useMemo(() => {
+    if (!hasAmount || matches.length) return [];
+    const byAmount = new Map<number, number>();
+    for (const t of pool) {
+      const v = at(Math.abs(t.amount));
+      byAmount.set(v, (byAmount.get(v) ?? 0) + 1);
+    }
+    return [...byAmount.entries()]
+      .map(([value, count]) => ({ value, count, diff: Math.abs(value - amount) }))
+      .sort((a, b) => a.diff - b.diff)
+      .slice(0, 6);
+  }, [pool, amount, hasAmount, matches.length]);
+
+  const total = matches.reduce((s, t) => s + t.amount, 0);
+  const rangeLabel = `${formatEUR(rangeFrom)} – ${formatEUR(rangeTo)}`;
+
+  const row = (t: Tx) => {
+    const cat = categories.find((c) => c.id === t.categoryId);
+    const sub = cat?.subcategories.find((x) => x.id === t.subcategoryId);
+    const acc = accounts.find((a) => a.id === t.accountId);
+    const transfer = isTransfer(t);
+    return {
+      id: t.id,
+      icon: transfer ? <ArrowLeftRight className="h-4 w-4" /> : sub ? iconNode(subIconKey(sub)) : catIcon(cat),
+      colorIdx: transfer ? (t.amount >= 0 ? 1 : 10) : (cat && sub ? subColor(cat, sub) : cat?.colorIdx) ?? (t.amount >= 0 ? 6 : 5),
+      title: transfer ? "Traspaso entre cuentas" : t.concept,
+      sub: `${formatFullDate(t.date)} · ${transfer ? "Traspaso" : cat ? `${cat.name} › ${sub?.name ?? "—"}` : "Sin categoría"}`,
+      meta: acc?.name,
+      value: formatSigned(t.amount),
+      valueTone: (t.amount >= 0 ? "pos" : "text") as "pos" | "text",
+      onClick: () => openModal({ kind: "txDetail", txId: t.id }),
+    };
+  };
+
+  return (
+    <Modal
+      title="Buscar por cantidad"
+      sub="Todos los movimientos con ese importe"
+      onClose={onClose}
+      width={520}
+      footer={
+        <>
+          <Btn variant="ghost" onClick={onClose} full>Cerrar</Btn>
+          {hasAmount && (
+            <Btn
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => openModal({ kind: "tx", amount: Math.round(amount * 100) / 100 })}
+              full
+            >
+              Crear movimiento de {formatEUR(amount)}
+            </Btn>
+          )}
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
+          <Search className="h-4 w-4 shrink-0" style={{ color: "var(--faint)" }} />
+          <input
+            autoFocus
+            value={raw}
+            onChange={(e) => setRaw(e.target.value.replace(/[^0-9.,-]/g, ""))}
+            inputMode="decimal"
+            placeholder="Cantidad, p. ej. 24,90"
+            aria-label="Cantidad a buscar"
+            className="pv-num w-full bg-transparent text-[15px] font-semibold outline-none"
+            style={{ color: "var(--text)" }}
+          />
+          {raw && (
+            <button type="button" aria-label="Borrar cantidad" onClick={() => setRaw("")} className="shrink-0" style={{ color: "var(--faint)" }}>
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            options={[{ id: "todos", label: "Todos" }, { id: "gasto", label: "Gastos" }, { id: "ingreso", label: "Ingresos" }, { id: "traspaso", label: "Traspasos" }]}
+            value={scope}
+            onChange={setScope}
+          />
+        </div>
+
+        <button
+          type="button"
+          aria-pressed={similar}
+          onClick={() => setSimilar((v) => !v)}
+          className="flex items-center gap-2.5 px-3 py-2.5 text-left text-[12.5px] font-semibold transition-colors"
+          style={{
+            borderRadius: "var(--radius)",
+            border: `1.5px solid ${similar ? "var(--accent)" : "var(--border)"}`,
+            background: similar ? "var(--accent-soft)" : "var(--surface-2)",
+            color: similar ? "var(--accent)" : "var(--text)",
+          }}
+        >
+          <span
+            aria-hidden
+            className="grid h-4 w-4 shrink-0 place-items-center"
+            style={{
+              borderRadius: 4,
+              border: `1.5px solid ${similar ? "var(--accent)" : "var(--border-strong)"}`,
+              background: similar ? "var(--accent)" : "transparent",
+              color: "var(--accent-fg)",
+            }}
+          >
+            {similar && <Check className="h-3 w-3" strokeWidth={3} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            Mostrar cantidades similares
+            <span className="pv-faint ml-1 font-normal">{hasAmount ? `(${rangeLabel})` : "(32 → 32,00 a 32,99)"}</span>
+          </span>
+        </button>
+
+        {!hasAmount && (
+          <p className="pv-faint py-6 text-center text-[12px]">Escribe una cantidad para ver los movimientos que coinciden.</p>
+        )}
+
+        {hasAmount && matches.length > 0 && (
+          <>
+            <p className="pv-muted text-[12px]">
+              <strong style={{ color: "var(--text)" }}>{matches.length}</strong>{" "}
+              {matches.length === 1 ? "movimiento" : "movimientos"}{" "}
+              {similar ? (
+                <>
+                  entre <strong style={{ color: "var(--text)" }}>{rangeLabel}</strong>
+                  {exactCount > 0 && <> · {exactCount} exacto{exactCount === 1 ? "" : "s"} de {formatEUR(amount)}</>}
+                </>
+              ) : (
+                <>de {formatEUR(amount)}</>
+              )}{" "}
+              · total {formatSigned(total)}
+            </p>
+            <div style={{ margin: "0 calc(var(--pad) * -1) calc(var(--pad) * -1)" }}>
+              <RowList items={matches.map(row)} />
+            </div>
+          </>
+        )}
+
+        {hasAmount && matches.length === 0 && (
+          <div className="flex flex-col gap-2">
+            <p className="pv-faint py-2 text-center text-[12px]">
+              {similar ? `Ningún movimiento entre ${rangeLabel} con ese filtro.` : `Ningún movimiento de ${formatEUR(amount)} con ese filtro.`}
+            </p>
+            {!similar && (
+              <Btn variant="ghost" full onClick={() => setSimilar(true)}>
+                Buscar entre {rangeLabel}
+              </Btn>
+            )}
+            {closest.length > 0 && (
+              <>
+                <p className="pv-muted text-[11px] font-bold uppercase tracking-[0.1em]">Cantidades parecidas</p>
+                <div className="flex flex-wrap gap-2">
+                  {closest.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => setRaw(String(c.value).replace(".", ","))}
+                      className="pv-num rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors"
+                      style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                    >
+                      {formatEUR(c.value)} <span className="pv-faint">· {c.count}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
 }
 
 /* ------------------------------ Buscar ------------------------------ */

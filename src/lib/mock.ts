@@ -1,4 +1,4 @@
-/* Datos de ejemplo realistas para replicar "Mi Patrimonio". */
+/* Datos de ejemplo realistas para replicar la app (Bilibank). */
 
 import type { ColorRef } from "./colors";
 

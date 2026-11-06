@@ -86,7 +86,7 @@ function Lab({ initialConfig, initialFeedback }: { initialConfig: DesignConfig; 
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-slate-900"><Columns2 className="h-4 w-4" /></span>
             <div className="min-w-0">
-              <h1 className="truncate text-[15px] font-semibold leading-tight text-white">Laboratorio de diseño · Mi Patrimonio</h1>
+              <h1 className="truncate text-[15px] font-semibold leading-tight text-white">Laboratorio de diseño · Bilibank</h1>
               <p className="truncate text-[11.5px] text-slate-500">6 estructuras de interfaz distintas (paneles, navegación, KPIs, botones, listas, gráficos) · el color se elige aparte</p>
             </div>
           </div>

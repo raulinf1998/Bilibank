@@ -139,7 +139,7 @@ function SidebarShell({ children }: { children: ReactNode }) {
       <aside className="flex w-[232px] shrink-0 flex-col border-r" style={{ background: "var(--sidebar)", borderColor: "var(--border)", backdropFilter: "var(--blur)" }}>
         <div className="flex items-center gap-2.5 px-4 py-4">
           <span className="pv-btn grid h-8 w-8 place-items-center"><PiggyBank className="h-4 w-4" strokeWidth={2.2} /></span>
-          <div><p className="pv-display text-[14px] font-bold leading-tight" style={{ color: "var(--text)" }}>Mi Patrimonio</p><p className="pv-faint text-[10px]">v2 · tarjetas clásicas</p></div>
+          <div><p className="pv-display text-[14px] font-bold leading-tight" style={{ color: "var(--text)" }}>Bilibank</p><p className="pv-faint text-[10px]">v2 · tarjetas clásicas</p></div>
         </div>
         <div className="pv-inset mx-3 mb-4 p-3">
           <p className="pv-muted text-[10px] font-semibold uppercase tracking-[0.12em]">Patrimonio neto</p>
@@ -186,7 +186,7 @@ function DockShell({ children }: { children: ReactNode }) {
       <header className="mb-6 flex items-center gap-4">
         <span className="grid h-12 w-12 place-items-center" style={{ background: "var(--bg)", boxShadow: "var(--neu-shadow-sm)", borderRadius: 999, color: "var(--accent)" }}><PiggyBank className="h-5 w-5" /></span>
         <div>
-          <p className="pv-faint text-[11px] font-semibold uppercase tracking-[0.14em]">Mi Patrimonio</p>
+          <p className="pv-faint text-[11px] font-semibold uppercase tracking-[0.14em]">Bilibank</p>
           <p className="pv-display pv-num text-[22px] font-bold leading-tight" style={{ color: "var(--text)" }}>{formatEUR(net)} <span className="text-[12px]" style={{ color: "var(--pos)" }}>{formatPct(3.42)}</span></p>
         </div>
         <button type="button" onClick={() => openModal({ kind: "search" })} className="ml-auto flex w-full max-w-sm items-center gap-2 px-4 py-2.5 text-left" style={{ background: "var(--surface-2)", boxShadow: "var(--neu-inset)", borderRadius: 999 }}>
@@ -223,9 +223,9 @@ function AppBarShell({ children }: { children: ReactNode }) {
       <header className="px-6 pb-3 pt-4" style={{ background: "color-mix(in srgb, var(--accent) 8%, var(--bg))" }}>
         <div className="flex items-center gap-4">
           <span className="grid h-11 w-11 place-items-center" style={{ background: "var(--accent)", color: "var(--accent-fg)", borderRadius: 16 }}><PiggyBank className="h-5 w-5" /></span>
-          <p className="pv-display text-[20px] font-semibold" style={{ color: "var(--text)" }}>Mi Patrimonio</p>
+          <p className="pv-display text-[20px] font-semibold" style={{ color: "var(--text)" }}>Bilibank</p>
           <button type="button" onClick={() => openModal({ kind: "search" })} className="ml-auto flex w-full max-w-md items-center gap-2 px-4 py-2.5 text-left" style={{ background: "color-mix(in srgb, var(--accent) 12%, var(--surface))", borderRadius: 999 }}>
-            <Search className="h-4 w-4" style={{ color: "var(--muted)" }} /><span className="pv-muted text-[13px]">Buscar en Mi Patrimonio</span>
+            <Search className="h-4 w-4" style={{ color: "var(--muted)" }} /><span className="pv-muted text-[13px]">Buscar en Bilibank</span>
           </button>
           <button type="button" aria-label="Avisos" onClick={() => openModal({ kind: "notifications" })} className="grid h-10 w-10 place-items-center" style={{ borderRadius: 999, color: "var(--muted)" }}><Bell className="h-5 w-5" /></button>
           <button type="button" aria-label="Ajustes" onClick={() => nav("ajustes")} className="pv-num grid h-10 w-10 place-items-center text-[12px] font-bold" style={{ background: "var(--accent-soft)", color: "var(--accent)", borderRadius: 999 }}>RR</button>
@@ -299,7 +299,7 @@ function ExplorerShell({ children }: { children: ReactNode }) {
           <button type="button" aria-label="Nuevo movimiento" onClick={newTx} className="grid h-9 w-9 place-items-center" style={{ background: "var(--accent)", color: "var(--accent-fg)", borderRadius: 4 }}><Plus className="h-4 w-4" strokeWidth={2.8} /></button>
         </nav>
         <aside className="w-[252px] shrink-0 border-r py-2" style={{ background: "var(--sidebar)", borderColor: "var(--border-strong)" }}>
-          <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: "var(--faint)", ...mono }}>Explorador · Mi Patrimonio</p>
+          <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: "var(--faint)", ...mono }}>Explorador · Bilibank</p>
           <div className="flex flex-col gap-1.5">
             {group("cur", "cuentas_corrientes", accounts.filter((a) => a.kind === "corriente" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
             {group("inv", "cuentas_inversion", accounts.filter((a) => a.kind === "inversion" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
@@ -313,7 +313,7 @@ function ExplorerShell({ children }: { children: ReactNode }) {
               {pageLabel.toLowerCase()}.view
               <span className="pv-faint ml-2">×</span>
             </div>
-            <p className="ml-auto truncate px-4 py-2 text-[11px]" style={{ color: "var(--faint)", ...mono }}>Mi Patrimonio › {pageLabel}{crumb ? ` › ${crumb}` : ""}</p>
+            <p className="ml-auto truncate px-4 py-2 text-[11px]" style={{ color: "var(--faint)", ...mono }}>Bilibank › {pageLabel}{crumb ? ` › ${crumb}` : ""}</p>
           </div>
           <main className="min-w-0 flex-1 p-4">{children}</main>
         </div>
@@ -338,7 +338,7 @@ function FloatingShell({ children }: { children: ReactNode }) {
       <header className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <span className="grid h-9 w-9 place-items-center" style={{ background: "var(--accent-soft)", color: "var(--accent)", borderRadius: 999 }}><PiggyBank className="h-4 w-4" /></span>
-          <div><p className="pv-faint text-[11px]">Hola, Raúl 👋</p><p className="text-[14px] font-bold" style={{ color: "var(--text)" }}>Mi Patrimonio</p></div>
+          <div><p className="pv-faint text-[11px]">Hola, Raúl 👋</p><p className="text-[14px] font-bold" style={{ color: "var(--text)" }}>Bilibank</p></div>
         </div>
         <nav className="flex items-center gap-1 p-1" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, backdropFilter: "var(--blur)" }}>
           {NAV.map((n) => (

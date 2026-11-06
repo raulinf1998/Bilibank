@@ -34,7 +34,7 @@ export interface Route {
 }
 
 export type ModalKind =
-  | { kind: "tx"; accountId?: number; categoryId?: number }
+  | { kind: "tx"; accountId?: number; categoryId?: number; amount?: number }
   | { kind: "transfer" }
   | { kind: "account" }
   | { kind: "product"; accountId?: number }
@@ -51,6 +51,7 @@ export type ModalKind =
   | { kind: "accountDetail"; accountId: number }
   | { kind: "paletteEditor"; key?: string }
   | { kind: "search" }
+  | { kind: "amountSearch"; amount?: number }
   | { kind: "notifications" }
   | { kind: "confirmClear" }
   | { kind: "organizeCategories"; categoryId?: number };

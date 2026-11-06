@@ -1,11 +1,46 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 
+/**
+ * Identidad de la aplicación: pestaña del navegador, historial y accesos
+ * directos del móvil. El icono es la hucha de cerdito de Bilibank.
+ */
 export const metadata: Metadata = {
-  title: "Laboratorio de diseño · Mi Patrimonio",
+  title: {
+    default: "Bilibank · Tus finanzas personales",
+    template: "%s · Bilibank",
+  },
+  applicationName: "Bilibank",
   description:
-    "Seis propuestas de rediseño para tu app de finanzas personales: paletas, tipografías, gráficas y componentes aplicados a tus pantallas reales.",
+    "Bilibank: tu patrimonio, cuentas, inversiones y movimientos en una sola pantalla, con diseño personalizable.",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: ["/favicon.svg"],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: { capable: true, title: "Bilibank", statusBarStyle: "black-translucent" },
+  openGraph: {
+    title: "Bilibank",
+    description: "Tu patrimonio, cuentas, inversiones y movimientos en una sola pantalla.",
+    siteName: "Bilibank",
+    type: "website",
+    images: [{ url: "/icon-512.png", width: 512, height: 512, alt: "Bilibank" }],
+  },
+  twitter: { card: "summary", title: "Bilibank", images: ["/icon-512.png"] },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#07080c" },
+    { media: "(prefers-color-scheme: light)", color: "#f7f7f5" },
+  ],
 };
 
 const GOOGLE_FONTS =
