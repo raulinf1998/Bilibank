@@ -511,9 +511,16 @@ function AmountSearchModal({ initial, onClose }: { initial?: number; onClose: ()
   const { transactions, categories, accounts, openModal } = usePreview();
   const [raw, setRaw] = useState(initial ? String(initial).replace(".", ",") : "");
   const [scope, setScope] = useState<"todos" | "gasto" | "ingreso" | "traspaso">("todos");
+  /* Cantidades similares: 32 muestra también todo lo que va de 32,00 a 32,99. */
+  const [similar, setSimilar] = useState(false);
 
   const amount = Number(raw.replace(",", "."));
   const hasAmount = raw.trim() !== "" && Number.isFinite(amount) && amount > 0;
+
+  /* Tramo de un euro completo: con 32 → [32,00 ; 32,99]. */
+  const euro = Math.floor(amount);
+  const rangeFrom = euro;
+  const rangeTo = Math.round((euro + 0.99) * 100) / 100;
 
   const pool = useMemo(
     () =>
@@ -527,8 +534,17 @@ function AmountSearchModal({ initial, onClose }: { initial?: number; onClose: ()
   );
 
   const at = (v: number) => Math.round(v * 100) / 100;
-  const matches = useMemo(
-    () => (hasAmount ? pool.filter((t) => Math.abs(Math.abs(t.amount) - amount) < 0.005) : []),
+  const matches = useMemo(() => {
+    if (!hasAmount) return [];
+    return pool.filter((t) => {
+      const value = at(Math.abs(t.amount));
+      if (!similar) return Math.abs(value - amount) < 0.005;
+      return value >= rangeFrom - 0.0001 && value <= rangeTo + 0.0001;
+    });
+  }, [pool, amount, hasAmount, similar, rangeFrom, rangeTo]);
+
+  const exactCount = useMemo(
+    () => (hasAmount ? pool.filter((t) => Math.abs(at(Math.abs(t.amount)) - amount) < 0.005).length : 0),
     [pool, amount, hasAmount],
   );
 
@@ -547,6 +563,7 @@ function AmountSearchModal({ initial, onClose }: { initial?: number; onClose: ()
   }, [pool, amount, hasAmount, matches.length]);
 
   const total = matches.reduce((s, t) => s + t.amount, 0);
+  const rangeLabel = `${formatEUR(rangeFrom)} – ${formatEUR(rangeTo)}`;
 
   const row = (t: Tx) => {
     const cat = categories.find((c) => c.id === t.categoryId);
@@ -607,11 +624,43 @@ function AmountSearchModal({ initial, onClose }: { initial?: number; onClose: ()
           )}
         </div>
 
-        <Segmented
-          options={[{ id: "todos", label: "Todos" }, { id: "gasto", label: "Gastos" }, { id: "ingreso", label: "Ingresos" }, { id: "traspaso", label: "Traspasos" }]}
-          value={scope}
-          onChange={setScope}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            options={[{ id: "todos", label: "Todos" }, { id: "gasto", label: "Gastos" }, { id: "ingreso", label: "Ingresos" }, { id: "traspaso", label: "Traspasos" }]}
+            value={scope}
+            onChange={setScope}
+          />
+        </div>
+
+        <button
+          type="button"
+          aria-pressed={similar}
+          onClick={() => setSimilar((v) => !v)}
+          className="flex items-center gap-2.5 px-3 py-2.5 text-left text-[12.5px] font-semibold transition-colors"
+          style={{
+            borderRadius: "var(--radius)",
+            border: `1.5px solid ${similar ? "var(--accent)" : "var(--border)"}`,
+            background: similar ? "var(--accent-soft)" : "var(--surface-2)",
+            color: similar ? "var(--accent)" : "var(--text)",
+          }}
+        >
+          <span
+            aria-hidden
+            className="grid h-4 w-4 shrink-0 place-items-center"
+            style={{
+              borderRadius: 4,
+              border: `1.5px solid ${similar ? "var(--accent)" : "var(--border-strong)"}`,
+              background: similar ? "var(--accent)" : "transparent",
+              color: "var(--accent-fg)",
+            }}
+          >
+            {similar && <Check className="h-3 w-3" strokeWidth={3} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            Mostrar cantidades similares
+            <span className="pv-faint ml-1 font-normal">{hasAmount ? `(${rangeLabel})` : "(32 → 32,00 a 32,99)"}</span>
+          </span>
+        </button>
 
         {!hasAmount && (
           <p className="pv-faint py-6 text-center text-[12px]">Escribe una cantidad para ver los movimientos que coinciden.</p>
@@ -620,7 +669,17 @@ function AmountSearchModal({ initial, onClose }: { initial?: number; onClose: ()
         {hasAmount && matches.length > 0 && (
           <>
             <p className="pv-muted text-[12px]">
-              <strong style={{ color: "var(--text)" }}>{matches.length}</strong> {matches.length === 1 ? "movimiento" : "movimientos"} de {formatEUR(amount)} · total {formatSigned(total)}
+              <strong style={{ color: "var(--text)" }}>{matches.length}</strong>{" "}
+              {matches.length === 1 ? "movimiento" : "movimientos"}{" "}
+              {similar ? (
+                <>
+                  entre <strong style={{ color: "var(--text)" }}>{rangeLabel}</strong>
+                  {exactCount > 0 && <> · {exactCount} exacto{exactCount === 1 ? "" : "s"} de {formatEUR(amount)}</>}
+                </>
+              ) : (
+                <>de {formatEUR(amount)}</>
+              )}{" "}
+              · total {formatSigned(total)}
             </p>
             <div style={{ margin: "0 calc(var(--pad) * -1) calc(var(--pad) * -1)" }}>
               <RowList items={matches.map(row)} />
@@ -630,7 +689,14 @@ function AmountSearchModal({ initial, onClose }: { initial?: number; onClose: ()
 
         {hasAmount && matches.length === 0 && (
           <div className="flex flex-col gap-2">
-            <p className="pv-faint py-2 text-center text-[12px]">Ningún movimiento de {formatEUR(amount)} con ese filtro.</p>
+            <p className="pv-faint py-2 text-center text-[12px]">
+              {similar ? `Ningún movimiento entre ${rangeLabel} con ese filtro.` : `Ningún movimiento de ${formatEUR(amount)} con ese filtro.`}
+            </p>
+            {!similar && (
+              <Btn variant="ghost" full onClick={() => setSimilar(true)}>
+                Buscar entre {rangeLabel}
+              </Btn>
+            )}
             {closest.length > 0 && (
               <>
                 <p className="pv-muted text-[11px] font-bold uppercase tracking-[0.1em]">Cantidades parecidas</p>
