@@ -12,8 +12,9 @@ import { iconNode } from "@/lib/icons";
 import { KIND_LABEL, PERIODS } from "@/lib/mock";
 import { inPeriod, periodLabel } from "@/lib/series";
 import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown, todayIso } from "@/lib/market";
+import { buildCsvFiles, buildCsvZip, downloadCsv, downloadCsvZip } from "@/lib/csv-export";
 import { isTransfer, transferEndpoints } from "@/lib/ledger";
-import { formatEUR, formatEUR0, formatFullDate, formatSigned } from "@/lib/format";
+import { formatEUR, formatEUR0, formatFullDate, formatNum, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, RowList, Segmented, Select } from "./primitives";
 import { DateField } from "./datefield";
 import { usePreview } from "./state";
@@ -63,6 +64,8 @@ export function ModalHost() {
       return <SearchModal onClose={closeModal} />;
     case "amountSearch":
       return <AmountSearchModal key={`amt-${modal.amount ?? "new"}`} initial={modal.amount} onClose={closeModal} />;
+    case "exportCsv":
+      return <ExportCsvModal onClose={closeModal} />;
     case "notifications":
       return <NotificationsModal onClose={closeModal} />;
     case "confirmClear":
@@ -497,6 +500,120 @@ function TxDetailModal({ txId, onClose }: { txId: number; onClose: () => void })
 /** Concepto base de un traspaso, sin la flecha de origen → destino. */
 function baseConcept(concept: string): string {
   return concept.split(" → ")[0].split(" ← ")[0];
+}
+
+/* ------------------------------ Exportar todos los datos (CSV) ------------------------------ */
+
+/**
+ * Exportador completo: elige qué conjuntos de datos descargar y obtén un ZIP
+ * con un CSV por entidad (cuentas, categorías, movimientos, traspasos,
+ * inversiones, operaciones, composición y resumen) o cada fichero por separado.
+ */
+function ExportCsvModal({ onClose }: { onClose: () => void }) {
+  const { accounts, categories, holdings, transactions } = usePreview();
+  const files = useMemo(
+    () => buildCsvFiles({ accounts, categories, holdings, transactions }),
+    [accounts, categories, holdings, transactions],
+  );
+  const [selected, setSelected] = useState<string[]>(() => files.map((f) => f.key));
+  const [done, setDone] = useState<string | null>(null);
+
+  const chosen = files.filter((f) => selected.includes(f.key));
+  const allOn = chosen.length === files.length;
+  const toggle = (key: string) =>
+    setSelected((list) => (list.includes(key) ? list.filter((k) => k !== key) : [...list, key]));
+  const toggleAll = () => setSelected(allOn ? [] : files.map((f) => f.key));
+
+  const downloadAll = () => {
+    if (!chosen.length) return;
+    downloadCsvZip(buildCsvZip(chosen));
+    setDone(`ZIP con ${chosen.length} ${chosen.length === 1 ? "archivo" : "archivos"} descargado`);
+  };
+
+  return (
+    <Modal
+      title="Exportar datos en CSV"
+      sub="Compatible con Excel, Numbers y LibreOffice · separador «;» y decimales con coma"
+      onClose={onClose}
+      width={600}
+      footer={
+        <>
+          <Btn variant="ghost" onClick={onClose} full>Cerrar</Btn>
+          <Btn icon={<Download className="h-3.5 w-3.5" />} onClick={downloadAll} disabled={!chosen.length} full>
+            Descargar ZIP ({chosen.length})
+          </Btn>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <button
+          type="button"
+          onClick={toggleAll}
+          className="flex items-center gap-2.5 px-3 py-2.5 text-left text-[12.5px] font-semibold"
+          style={{ borderRadius: "var(--radius)", border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)" }}
+        >
+          <span
+            aria-hidden
+            className="grid h-4 w-4 shrink-0 place-items-center"
+            style={{ borderRadius: 4, border: `1.5px solid ${allOn ? "var(--accent)" : "var(--border-strong)"}`, background: allOn ? "var(--accent)" : "transparent", color: "var(--accent-fg)" }}
+          >
+            {allOn && <Check className="h-3 w-3" strokeWidth={3} />}
+          </span>
+          {allOn ? "Quitar todos" : "Seleccionar todos"}
+          <span className="pv-faint ml-auto text-[11px] font-normal">{files.length} archivos</span>
+        </button>
+
+        {files.map((f) => {
+          const on = selected.includes(f.key);
+          return (
+            <div
+              key={f.key}
+              className="flex items-center gap-2.5 px-3 py-2.5"
+              style={{ borderRadius: "var(--radius)", border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`, background: "var(--surface-2)" }}
+            >
+              <button
+                type="button"
+                aria-pressed={on}
+                aria-label={`Incluir ${f.label}`}
+                onClick={() => toggle(f.key)}
+                className="grid h-4 w-4 shrink-0 place-items-center"
+                style={{ borderRadius: 4, border: `1.5px solid ${on ? "var(--accent)" : "var(--border-strong)"}`, background: on ? "var(--accent)" : "transparent", color: "var(--accent-fg)" }}
+              >
+                {on && <Check className="h-3 w-3" strokeWidth={3} />}
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>
+                  {f.label} <span className="pv-faint text-[11px] font-normal">· {f.filename}</span>
+                </p>
+                <p className="pv-faint truncate text-[11px]">{f.description}</p>
+              </div>
+              <span className="pv-num shrink-0 text-[11px] font-semibold" style={{ color: "var(--muted)" }}>{formatNum(f.rows)} filas</span>
+              <button
+                type="button"
+                aria-label={`Descargar ${f.label} en CSV`}
+                title={`Descargar ${f.filename}`}
+                onClick={() => { downloadCsv(f.filename, f.content); setDone(`${f.filename} descargado`); }}
+                className="grid h-7 w-7 shrink-0 place-items-center transition-colors hover:!border-[var(--accent)]"
+                style={{ color: "var(--faint)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
+              >
+                <Download className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
+
+        {done && (
+          <p className="flex items-center gap-2 text-[12px]" style={{ color: "var(--pos)" }}>
+            <Check className="h-4 w-4" /> {done}
+          </p>
+        )}
+        <p className="pv-faint text-[11px]">
+          Cada fila es un registro del libro: las cuentas incluyen su saldo y lo invertido, los movimientos su saldo resultante,
+          y las inversiones su valor, coste y rentabilidad.
+        </p>
+      </div>
+    </Modal>
+  );
 }
 
 /* ------------------------------ Buscar por cantidad ------------------------------ */
