@@ -18,6 +18,7 @@ import { shortDate, todayIso } from "@/lib/market";
 import { isTransfer, runningBalances, singleAccount, transferEndpoints } from "@/lib/ledger";
 import { CompareBars, Donut, HBars, MultiLines, Sparkline, StackedArea, StackedBars, TrendChart, downsample } from "./charts";
 import { PriceChartWithPurchases } from "./purchase-chart";
+import { operationResults, operationTotals } from "@/lib/operations";
 import { HoverLayer, TipBody, TipRow } from "./hover";
 import { BucketAxis, Btn, Chip, KpiGroup, Panel, PanelGrid, PageHeader, RowList, SectionTitle, Segmented, Select, Stack, TimeAxis } from "./primitives";
 import { useArch, usePreview } from "./state";
@@ -1696,6 +1697,154 @@ function PortfolioList() {
   );
 }
 
+/* ------------------------------ Operaciones de un producto ------------------------------ */
+
+const OP_LABEL: Record<string, string> = { compra: "Compra", venta: "Venta", dividendo: "Dividendo", aportacion: "Aportación" };
+
+/**
+ * Tabla de operaciones con el detalle de cada una: participaciones, precio por
+ * participación, total invertido, comisiones y la ganancia de esa operación
+ * (realizada + latente, lotes FIFO) en euros y en porcentaje.
+ */
+function OperationsTable({ holding, onEdit, onNew }: { holding: Holding; onEdit: (opId: number) => void; onNew: () => void }) {
+  const { isMobile } = useArch();
+  const rows = useMemo(() => {
+    const list = operationResults(holding);
+    return [...list].sort((a, b) => (a.op.date < b.op.date ? 1 : a.op.date > b.op.date ? -1 : b.op.id - a.op.id));
+  }, [holding]);
+  const totals = useMemo(() => operationTotals(rows), [rows]);
+
+  const th = "pv-muted px-2 py-2 text-[10px] font-bold uppercase tracking-[0.1em] whitespace-nowrap";
+  const td = "pv-num px-2 py-2 text-[12px] whitespace-nowrap";
+  const gainTone = (v?: number) => (v === undefined ? "var(--muted)" : v > 0 ? "var(--pos)" : v < 0 ? "var(--neg)" : "var(--text)");
+
+  return (
+    <Panel pad={false}>
+      <div style={{ padding: "var(--pad)", paddingBottom: 8 }}>
+        <SectionTitle
+          sub={`${holding.operations.length} operaciones · ganancia de cada una por lotes FIFO (realizada + pendiente al precio actual)`}
+          action={<Btn variant="ghost" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={onNew}>Nueva</Btn>}
+        >
+          Operaciones
+        </SectionTitle>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="pv-faint px-5 pb-5 text-[12px]">Sin operaciones todavía.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left" style={{ minWidth: isMobile ? 720 : 0 }}>
+            <thead>
+              <tr style={{ background: "var(--surface-2)" }}>
+                <th className={`${th} pl-4`}>Fecha</th>
+                <th className={th}>Tipo</th>
+                <th className={`${th} text-right`}>Participaciones</th>
+                <th className={`${th} text-right`}>Precio / part.</th>
+                <th className={`${th} text-right`}>Total invertido</th>
+                <th className={`${th} text-right`}>Comisiones</th>
+                <th className={`${th} text-right`}>Valor actual</th>
+                <th className={`${th} text-right`}>Ganancia</th>
+                <th className={`${th} text-right`}>%</th>
+                <th className={`${th} pr-4 text-right`}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const isBuy = r.kind === "compra";
+                const isSale = r.kind === "venta";
+                const isDiv = r.kind === "dividendo";
+                return (
+                  <tr key={r.op.id} className="pv-table-row" style={{ borderTop: "1px solid var(--border)" }}>
+                    <td className="px-2 py-2 pl-4 text-[12px] whitespace-nowrap" style={{ color: "var(--text)" }}>{formatFullDate(r.op.date)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap">
+                      <span
+                        className="pv-pill px-2 py-0.5 text-[10.5px] font-semibold"
+                        style={{
+                          color: isSale ? "var(--neg)" : isDiv ? "var(--pos)" : "var(--accent)",
+                          background: isSale ? "var(--neg-soft)" : isDiv ? "var(--pos-soft)" : "var(--accent-soft)",
+                        }}
+                      >
+                        {OP_LABEL[r.kind]}
+                        {isBuy && r.closed ? " · vendida" : ""}
+                      </span>
+                    </td>
+                    <td className={`${td} text-right`} style={{ color: "var(--text)" }}>
+                      {r.units ? formatNum(r.units) : "—"}
+                      {isBuy && !r.closed && (r.remainingUnits ?? 0) > 0 && Math.abs((r.remainingUnits ?? 0) - r.units) > 1e-6 && (
+                        <span className="pv-faint text-[10.5px]"> ({formatNum(r.remainingUnits ?? 0)} en cartera)</span>
+                      )}
+                    </td>
+                    <td className={`${td} text-right`} style={{ color: "var(--text)" }}>{formatNum(r.price)} €</td>
+                    <td className={`${td} text-right font-semibold`} style={{ color: "var(--text)" }}>
+                      {formatEUR(r.amount)}
+                      <span className="pv-faint text-[10.5px]"> {isSale ? "cobrado" : isDiv ? "neto" : "invertido"}</span>
+                    </td>
+                    <td className={`${td} text-right`} style={{ color: r.fees ? "var(--text)" : "var(--faint)" }}>{r.fees ? formatEUR(r.fees) : "—"}</td>
+                    <td className={`${td} text-right`} style={{ color: "var(--text)" }}>
+                      {isBuy && r.currentValue !== undefined ? (
+                        <>
+                          {formatEUR(r.currentValue)}
+                          {r.closed && <span className="pv-faint text-[10.5px]"> (0)</span>}
+                        </>
+                      ) : isSale && r.costBasis !== undefined ? (
+                        <>
+                          {formatEUR(r.costBasis)}
+                          <span className="pv-faint text-[10.5px]"> coste</span>
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className={`${td} text-right font-bold`} style={{ color: gainTone(r.gain) }}>
+                      {r.gain === undefined ? "—" : `${r.gain > 0 ? "+" : ""}${formatEUR(r.gain)}`}
+                    </td>
+                    <td className={`${td} text-right font-bold`} style={{ color: gainTone(r.gainPct) }}>
+                      {r.gainPct === undefined ? "—" : `${r.gainPct > 0 ? "+" : ""}${formatNum(r.gainPct)} %`}
+                    </td>
+                    <td className="px-2 py-2 pr-4 text-right">
+                      <Btn variant="ghost" size="sm" aria={`Editar ${OP_LABEL[r.kind].toLowerCase()}`} icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => onEdit(r.op.id)}>Editar</Btn>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: "2px solid var(--border-strong)", background: "var(--surface-2)" }}>
+                <td className="pv-muted px-2 py-2 pl-4 text-[10.5px] font-bold uppercase tracking-[0.08em] whitespace-nowrap" colSpan={2}>Total</td>
+                <td className={`${td} text-right`} style={{ color: "var(--muted)" }}>{formatNum(holding.units)} en cartera</td>
+                <td className={`${td} text-right`} style={{ color: "var(--muted)" }}>{formatNum(holding.invested / Math.max(holding.units, 1e-9))} €</td>
+                <td className={`${td} text-right font-bold`} style={{ color: "var(--text)" }}>{formatEUR(totals.bought)}</td>
+                <td className={`${td} text-right`} style={{ color: "var(--text)" }}>{formatEUR(totals.fees)}</td>
+                <td className={`${td} text-right font-bold`} style={{ color: "var(--text)" }}>{formatEUR(holdingValue(holding))}</td>
+                <td className={`${td} text-right font-bold`} style={{ color: gainTone(totals.openGain + totals.realizedGain) }}>
+                  {`${totals.openGain + totals.realizedGain > 0 ? "+" : ""}${formatEUR(totals.openGain + totals.realizedGain)}`}
+                </td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      <p className="px-4 pt-3 text-[10.5px] pv-faint">
+        En una compra, la ganancia es la de ese lote: lo que vale hoy lo que sigue en cartera más lo ya realizado si se vendió parte.
+        En una venta, es lo cobrado menos el coste FIFO de esas participaciones.
+        {isMobile ? " Desliza la tabla para ver todas las columnas." : ""}
+      </p>
+      <div className="flex flex-wrap gap-x-5 gap-y-1 px-4 pb-4 pt-2 text-[11px] pv-muted">
+        <span>Invertido: <b className="pv-num" style={{ color: "var(--text)" }}>{formatEUR(totals.bought)}</b></span>
+        <span>Ganancia pendiente: <b className="pv-num" style={{ color: gainTone(totals.openGain) }}>{formatSigned(totals.openGain)}</b></span>
+        {totals.realizedGain !== 0 && (
+          <span>Ganancia realizada: <b className="pv-num" style={{ color: gainTone(totals.realizedGain) }}>{formatSigned(totals.realizedGain)}</b></span>
+        )}
+        {totals.dividends > 0 && (
+          <span>Dividendos: <b className="pv-num" style={{ color: "var(--pos)" }}>{formatSigned(totals.dividends)}</b></span>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function ProductDetail({ id }: { id: number }) {
   const { arch, isMobile } = useArch();
   const { holdings, accounts, back, openModal, period, setPeriod, go } = usePreview();
@@ -1725,9 +1874,6 @@ function ProductDetail({ id }: { id: number }) {
     { label: `Variación · ${periodShort(period)}`, value: formatPct(pc), delta: formatSigned((win[win.length - 1] - win[0]) * h.units), trend: trend(pc), footnote: "sobre tu posición", icon: <Coins className="h-4 w-4" />, colorIdx: 2, pct: Math.min(100, Math.abs(pc) * 3) },
     { label: "Precio medio", value: `${formatNum(avg)} €`, footnote: `${formatNum(h.units)} participaciones · ${((v / Math.max(totalPortfolio, 1)) * 100).toFixed(1).replace(".", ",")} % de la cartera`, icon: <Wallet className="h-4 w-4" />, colorIdx: 3, pct: Math.min(100, (avg / Math.max(h.price, 1)) * 100) },
   ];
-
-  const opLabel: Record<string, string> = { compra: "Compra", venta: "Venta", dividendo: "Dividendo", aportacion: "Aportación" };
-  const ops = [...h.operations].sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : y.id - x.id));
 
   return (
     <Tinted color={h.colorIdx}>
@@ -1843,29 +1989,7 @@ function ProductDetail({ id }: { id: number }) {
         </Panel>
       </PanelGrid>
 
-      <Panel pad={false}>
-        <div style={{ padding: "var(--pad)", paddingBottom: 8 }}>
-          <SectionTitle sub={`${h.operations.length} operaciones · lotes FIFO: las ventas consumen primero las compras más antiguas`} action={<Btn variant="ghost" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: h.id })}>Nueva</Btn>}>Operaciones</SectionTitle>
-        </div>
-        <RowList
-          items={ops.map((op) => ({
-            id: op.id,
-            icon: op.type === "venta" ? <TrendingUp className="h-4 w-4 rotate-90" /> : op.type === "dividendo" ? <Coins className="h-4 w-4" /> : <Plus className="h-4 w-4" />,
-            colorIdx: op.type === "venta" ? 5 : op.type === "dividendo" ? 4 : 3,
-            title: `${opLabel[op.type]}${op.units ? ` · ${formatNum(op.units)} part.` : ""}`,
-            sub: formatFullDate(op.date),
-            meta: op.fees ? `comisión ${formatEUR(op.fees)}` : undefined,
-            value: op.type === "dividendo" ? formatSigned(op.price) : formatEUR(op.units * op.price),
-            valueTone: (op.type === "dividendo" ? "pos" : "text") as "pos" | "text",
-            sub2: op.type === "dividendo" ? undefined : `${formatNum(op.price)} €/part.`,
-            sub2Tone: "muted" as const,
-            extra: (
-              <Btn variant="ghost" size="sm" aria="Editar operación" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "editOperation", productId: h.id, opId: op.id })}>Editar</Btn>
-            ),
-          }))}
-          empty="Sin operaciones todavía"
-        />
-      </Panel>
+      <OperationsTable holding={h} onEdit={(opId) => openModal({ kind: "editOperation", productId: h.id, opId })} onNew={() => openModal({ kind: "operation", productId: h.id })} />
     </Stack>
     </Tinted>
   );

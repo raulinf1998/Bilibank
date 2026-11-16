@@ -19,6 +19,7 @@
 import { zipSync, strToU8 } from "fflate";
 import { holdingValue, type Account, type Category, type Holding, type Tx } from "./mock";
 import { isTransfer, runningBalances, transferEndpoints } from "./ledger";
+import { operationResults } from "./operations";
 import { todayIso } from "./market";
 
 export interface ExportPayload {
@@ -191,9 +192,13 @@ export function buildCsvFiles(data: ExportPayload): CsvFile[] {
   });
 
   /* ------------------------------ operaciones ------------------------------ */
+  /* Cada operación con su resultado: lo invertido y la ganancia solo de esa
+     operación (lotes FIFO), igual que en la tabla de la app. */
   const operationRows: unknown[][] = [];
   for (const h of holdings) {
-    for (const op of h.operations) {
+    const results = operationResults(h);
+    for (const r of results) {
+      const op = r.op;
       operationRows.push([
         h.nickname || h.name,
         h.ticker,
@@ -204,7 +209,12 @@ export function buildCsvFiles(data: ExportPayload): CsvFile[] {
         num(op.units),
         num(op.price),
         num(op.fees),
-        num(op.units * op.price + op.fees),
+        num(r.amount),
+        r.costBasis === undefined ? "" : num(r.costBasis),
+        r.currentValue === undefined ? "" : num(r.currentValue),
+        r.remainingUnits === undefined ? "" : num(r.remainingUnits),
+        r.gain === undefined ? "" : num(r.gain),
+        r.gainPct === undefined ? "" : pct(r.gainPct),
       ]);
     }
   }
@@ -305,7 +315,26 @@ export function buildCsvFiles(data: ExportPayload): CsvFile[] {
       label: "Operaciones",
       description: "Compras, ventas, dividendos y aportaciones de cada producto",
       rows: operationRows.length,
-      content: toCsv(["Producto", "Ticker", "Cuenta", "Fecha", "Fecha ISO", "Tipo", "Participaciones", "Precio (EUR)", "Comisiones (EUR)", "Importe total (EUR)"], operationRows),
+      content: toCsv(
+        [
+          "Producto",
+          "Ticker",
+          "Cuenta",
+          "Fecha",
+          "Fecha ISO",
+          "Tipo",
+          "Participaciones",
+          "Precio (EUR)",
+          "Comisiones (EUR)",
+          "Importe total (EUR)",
+          "Coste FIFO (EUR)",
+          "Valor actual (EUR)",
+          "Participaciones en cartera",
+          "Ganancia de la operación (EUR)",
+          "Ganancia de la operación (%)",
+        ],
+        operationRows,
+      ),
     },
     {
       key: "composicion",
