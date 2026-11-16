@@ -17,6 +17,7 @@ import { formatEUR, formatEUR0, formatNum, formatPct, formatDate, formatFullDate
 import { shortDate, todayIso } from "@/lib/market";
 import { isTransfer, runningBalances, singleAccount, transferEndpoints } from "@/lib/ledger";
 import { CompareBars, Donut, HBars, MultiLines, Sparkline, StackedArea, StackedBars, TrendChart, downsample } from "./charts";
+import { PriceChartWithPurchases } from "./purchase-chart";
 import { HoverLayer, TipBody, TipRow } from "./hover";
 import { BucketAxis, Btn, Chip, KpiGroup, Panel, PanelGrid, PageHeader, RowList, SectionTitle, Segmented, Select, Stack, TimeAxis } from "./primitives";
 import { useArch, usePreview } from "./state";
@@ -1741,13 +1742,9 @@ function ProductDetail({ id }: { id: number }) {
 
       <PanelGrid cols="grid-cols-1 xl:grid-cols-3">
         <Panel span="xl:col-span-2">
-          <SectionTitle sub={`Precio de mercado · ${periodLabel(period).toLowerCase()}`} action={<Segmented options={PERIODS} value={period} onChange={setPeriod} />}>Evolución del precio</SectionTitle>
-          <TrendChart values={win} style={cs} height={isMobile ? 150 : 210} color={chartColor(h.colorIdx)} />
+          <SectionTitle sub={`Precio de mercado y tus compras · ${periodLabel(period).toLowerCase()}`} action={<Segmented options={PERIODS} value={period} onChange={setPeriod} />}>Evolución del precio</SectionTitle>
+          <PriceChartWithPurchases holding={h} series={win} period={period} height={isMobile ? 150 : 210} />
           <TimeAxis period={period} />
-          <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] pv-muted">
-            <span className="flex items-center gap-1.5"><span className="h-2 w-4" style={{ background: chartColor(h.colorIdx) }} /> Precio</span>
-            <span className="pv-num">Mín. {formatNum(Math.min(...win))} · Máx. {formatNum(Math.max(...win))}</span>
-          </div>
         </Panel>
         <Panel>
           <SectionTitle sub="Coste, valor y ficha del producto">Composición</SectionTitle>

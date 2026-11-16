@@ -4,6 +4,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, Database, Download, FileArchive, Globe, KeyRound, ListTree, LoaderCircle, Palette, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, TableProperties, Tag, Trash2, TriangleAlert, Upload, Check, X } from "lucide-react";
 import { strFromU8, unzipSync } from "fflate";
 import { buildSnapshot, type ImportSummary } from "@/lib/moneymatter";
+import { findBackupInZip } from "@/lib/backup";
 import { PERIODS, holdingValue, subColor } from "@/lib/mock";
 import { DATA_COLORS, DATA_COLOR_NAMES, chartColor } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
@@ -17,7 +18,7 @@ import { HoverLayer, TipBody, TipRow } from "./hover";
 import { BucketAxis, Btn, Chip, ColorPicker, IconBadge, KpiGroup, Panel, PanelGrid, PageHeader, RowList, SectionTitle, Segmented, Stack, TimeAxis } from "./primitives";
 import { useArch, usePreview } from "./state";
 import { PeriodBar } from "./periodbar";
-import { TxList, accountSeries, catIcon, downloadFile, productSeries, useSpending, useTotals } from "./views-main";
+import { TxList, accountSeries, catIcon, productSeries, useSpending, useTotals } from "./views-main";
 
 const trend = (v: number): "up" | "down" => (v >= 0 ? "up" : "down");
 
@@ -730,6 +731,13 @@ function MoneyMatterImport() {
       const files: Record<string, string> = {};
       if (/\.zip$/i.test(file.name)) {
         const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+        /* Si es una copia de Bilibank, se restaura tal cual (sin reinterpretar). */
+        const backup = findBackupInZip(entries, strFromU8);
+        if (backup) {
+          if (!importData(backup)) throw new Error("La copia se leyó pero no se pudo aplicar.");
+          setState({ status: "idle" });
+          return;
+        }
         for (const [name, bytes] of Object.entries(entries)) {
           if (name.endsWith("/") || !/\.(csv|json)$/i.test(name)) continue;
           files[name] = strFromU8(bytes);
@@ -826,7 +834,7 @@ function MoneyMatterImport() {
 
 export function SettingsView() {
   const { arch, cfg, patchConfig, isMobile } = useArch();
-  const { accounts, holdings, categories, transactions, sources, toggleSource, exportData, importData, resetData, openModal } = usePreview();
+  const { accounts, holdings, categories, transactions, sources, toggleSource, importData, resetData, openModal } = usePreview();
   const lib = usePaletteLibrary();
   const active = lib.resolve(cfg.paletteKey);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -851,13 +859,42 @@ export function SettingsView() {
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
-    importData(await file.text());
-    if (fileRef.current) fileRef.current.value = "";
+    try {
+      if (/\.zip$/i.test(file.name)) {
+        /* Copia de Bilibank (JSON exacto dentro del ZIP) o export de CSV. */
+        const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+        const backup = findBackupInZip(entries, strFromU8);
+        if (backup) {
+          importData(backup);
+          return;
+        }
+        const files: Record<string, string> = {};
+        for (const [name, bytes] of Object.entries(entries)) {
+          if (name.endsWith("/") || !/\.(csv|json)$/i.test(name)) continue;
+          files[name] = strFromU8(bytes);
+        }
+        const { snapshot, summary } = buildSnapshot(files, { source: file.name });
+        setTodayReference(summary.lastDate);
+        importData(JSON.stringify(snapshot));
+        return;
+      }
+      importData(await file.text());
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
   };
 
   return (
     <Stack>
-      <PageHeader kicker="Configuración" title="Ajustes" />
+      <PageHeader
+        kicker="Configuración"
+        title="Ajustes"
+        action={
+          <Btn icon={<Download className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "exportCsv" })}>
+            Exportar todos los datos
+          </Btn>
+        }
+      />
       <Panel span="xl:col-span-2">
         <SectionTitle sub="Esta instalación guarda tus cambios en la base de datos del servidor y se abre desde cualquier dispositivo de tu red">
           Aplicación y servidor
@@ -976,10 +1013,15 @@ export function SettingsView() {
 
         <Panel>
           <SectionTitle sub="Copias de seguridad y restauración">Datos</SectionTitle>
-          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
-          <SettingRow icon={<ShieldCheck className="h-4 w-4" />} colorIdx={3} title="Descargar copia de seguridad" hint="Cuentas, categorías, productos y movimientos en JSON" right={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => downloadFile("mi-patrimonio-copia.json", exportData(), "application/json")}>Descargar</Btn>} />
-          <SettingRow icon={<TableProperties className="h-4 w-4" />} colorIdx={8} title="Exportar todos los datos en CSV" hint="Cuentas, categorías, movimientos, traspasos, inversiones y operaciones · ZIP o archivo a archivo" right={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "exportCsv" })}>Exportar CSV</Btn>} />
-          <SettingRow icon={<Database className="h-4 w-4" />} colorIdx={1} title="Importar / restaurar datos" hint="Carga una copia descargada desde aquí" right={<Btn variant="ghost" size="sm" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => fileRef.current?.click()}>Importar</Btn>} />
+          <input ref={fileRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+          <SettingRow
+            icon={<ShieldCheck className="h-4 w-4" />}
+            colorIdx={3}
+            title="Exportar todos los datos"
+            hint="Copia de seguridad para restaurar (ZIP con JSON + documento legible) o CSV para otra aplicación"
+            right={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "exportCsv" })}>Exportar</Btn>}
+          />
+          <SettingRow icon={<Database className="h-4 w-4" />} colorIdx={1} title="Importar / restaurar datos" hint="Acepta el ZIP de copia de Bilibank o el JSON exacto" right={<Btn variant="ghost" size="sm" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => fileRef.current?.click()}>Importar</Btn>} />
           <MoneyMatterImport />
           <SettingRow icon={<RotateCcw className="h-4 w-4" />} colorIdx={4} title="Restablecer datos de ejemplo" hint="Vuelve a las 10 cuentas, 8 categorías y 10 productos iniciales" right={<Btn variant="ghost" size="sm" onClick={resetData}>Restablecer</Btn>} />
           <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] pv-muted">

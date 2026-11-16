@@ -722,7 +722,7 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   }, [flash]);
 
   const exportData = useCallback(
-    () => JSON.stringify({ app: "mi-patrimonio-demo", version: 1, exportedAt: "2026-02-24", accounts, categories, holdings, transactions }, null, 2),
+    () => JSON.stringify({ app: "bilibank", version: 2, exportedAt: todayIso(), accounts, categories, holdings, transactions }, null, 2),
     [accounts, categories, holdings, transactions],
   );
 

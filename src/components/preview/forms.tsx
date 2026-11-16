@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowDown, ArrowDownRight, ArrowLeftRight, ArrowUp, ArrowUpRight, Bell, Briefcase, Check, ChevronRight, Download, Landmark, LoaderCircle, Pencil, Plus, Search, StickyNote, Tag, Trash2, TriangleAlert, X,
+  ArrowDown, ArrowDownRight, ArrowLeftRight, ArrowUp, ArrowUpRight, Bell, Briefcase, Check, ChevronRight, Database, Download, FileArchive, FileText, Landmark, LoaderCircle, Pencil, Plus, Search, ShieldCheck, StickyNote, TableProperties, Tag, Trash2, TriangleAlert, X,
 } from "lucide-react";
 import type { Account, AccountKind, Category, Holding, Operation, Tx } from "@/lib/mock";
 import { HOLDING_CATEGORIES, type HoldingCategory } from "@/lib/mock";
@@ -12,7 +12,8 @@ import { iconNode } from "@/lib/icons";
 import { KIND_LABEL, PERIODS } from "@/lib/mock";
 import { inPeriod, periodLabel } from "@/lib/series";
 import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown, todayIso } from "@/lib/market";
-import { buildCsvFiles, buildCsvZip, downloadCsv, downloadCsvZip } from "@/lib/csv-export";
+import { buildCsvFiles, buildCsvZip, downloadBytes, downloadCsv, downloadCsvZip, downloadText } from "@/lib/csv-export";
+import { buildBackupBundle, buildBackupJson, buildReadableHtml } from "@/lib/backup";
 import { isTransfer, transferEndpoints } from "@/lib/ledger";
 import { formatEUR, formatEUR0, formatFullDate, formatNum, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, RowList, Segmented, Select } from "./primitives";
@@ -502,19 +503,21 @@ function baseConcept(concept: string): string {
   return concept.split(" → ")[0].split(" ← ")[0];
 }
 
-/* ------------------------------ Exportar todos los datos (CSV) ------------------------------ */
+/* ------------------------------ Exportar todos los datos ------------------------------ */
 
 /**
- * Exportador completo: elige qué conjuntos de datos descargar y obtén un ZIP
- * con un CSV por entidad (cuentas, categorías, movimientos, traspasos,
- * inversiones, operaciones, composición y resumen) o cada fichero por separado.
+ * Exportador completo con dos formatos:
+ *
+ * · Copia de seguridad de Bilibank (recomendada): ZIP con el JSON exacto para
+ *   restaurar, un documento legible (HTML) con todo en tablas y los CSV.
+ * · CSV para otra aplicación: un archivo por entidad, plano y fácil de importar
+ *   en Excel, Numbers o cualquier herramienta.
  */
 function ExportCsvModal({ onClose }: { onClose: () => void }) {
   const { accounts, categories, holdings, transactions } = usePreview();
-  const files = useMemo(
-    () => buildCsvFiles({ accounts, categories, holdings, transactions }),
-    [accounts, categories, holdings, transactions],
-  );
+  const data = useMemo(() => ({ accounts, categories, holdings, transactions }), [accounts, categories, holdings, transactions]);
+  const files = useMemo(() => buildCsvFiles(data), [data]);
+  const [mode, setMode] = useState<"copia" | "csv">("copia");
   const [selected, setSelected] = useState<string[]>(() => files.map((f) => f.key));
   const [done, setDone] = useState<string | null>(null);
 
@@ -524,93 +527,169 @@ function ExportCsvModal({ onClose }: { onClose: () => void }) {
     setSelected((list) => (list.includes(key) ? list.filter((k) => k !== key) : [...list, key]));
   const toggleAll = () => setSelected(allOn ? [] : files.map((f) => f.key));
 
-  const downloadAll = () => {
+  const stamp = todayIso();
+  const operations = holdings.reduce((s, h) => s + h.operations.length, 0);
+
+  const downloadBackup = () => {
+    const bundle = buildBackupBundle(data, stamp);
+    downloadBytes(`bilibank-copia-${stamp}.zip`, bundle.zip, "application/zip");
+    setDone("Copia de seguridad completa descargada · ZIP con JSON, documento legible y CSV");
+  };
+
+  const downloadOnlyJson = () => {
+    downloadText(`bilibank-copia-${stamp}.json`, buildBackupJson(data, stamp), "application/json");
+    setDone("JSON exacto descargado · sirve para restaurar desde Ajustes");
+  };
+
+  const downloadReadable = () => {
+    downloadText(`bilibank-copia-${stamp}.html`, buildReadableHtml(data, stamp), "text/html;charset=utf-8");
+    setDone("Documento legible descargado · ábrelo en el navegador o guárdalo en PDF");
+  };
+
+  const downloadAllCsv = () => {
     if (!chosen.length) return;
-    downloadCsvZip(buildCsvZip(chosen));
-    setDone(`ZIP con ${chosen.length} ${chosen.length === 1 ? "archivo" : "archivos"} descargado`);
+    downloadCsvZip(buildCsvZip(chosen, stamp), stamp);
+    setDone(`ZIP con ${chosen.length} ${chosen.length === 1 ? "archivo" : "archivos"} CSV descargado`);
   };
 
   return (
     <Modal
-      title="Exportar datos en CSV"
-      sub="Compatible con Excel, Numbers y LibreOffice · separador «;» y decimales con coma"
+      title="Exportar todos los datos"
+      sub="Elige una copia para restaurar o CSV para llevarte los datos a otra app"
       onClose={onClose}
-      width={600}
+      width={620}
       footer={
         <>
           <Btn variant="ghost" onClick={onClose} full>Cerrar</Btn>
-          <Btn icon={<Download className="h-3.5 w-3.5" />} onClick={downloadAll} disabled={!chosen.length} full>
-            Descargar ZIP ({chosen.length})
-          </Btn>
+          {mode === "copia" ? (
+            <Btn icon={<Download className="h-3.5 w-3.5" />} onClick={downloadBackup} full>
+              Descargar copia (ZIP)
+            </Btn>
+          ) : (
+            <Btn icon={<Download className="h-3.5 w-3.5" />} onClick={downloadAllCsv} disabled={!chosen.length} full>
+              Descargar ZIP ({chosen.length})
+            </Btn>
+          )}
         </>
       }
     >
-      <div className="flex flex-col gap-3">
-        <button
-          type="button"
-          onClick={toggleAll}
-          className="flex items-center gap-2.5 px-3 py-2.5 text-left text-[12.5px] font-semibold"
-          style={{ borderRadius: "var(--radius)", border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)" }}
-        >
-          <span
-            aria-hidden
-            className="grid h-4 w-4 shrink-0 place-items-center"
-            style={{ borderRadius: 4, border: `1.5px solid ${allOn ? "var(--accent)" : "var(--border-strong)"}`, background: allOn ? "var(--accent)" : "transparent", color: "var(--accent-fg)" }}
-          >
-            {allOn && <Check className="h-3 w-3" strokeWidth={3} />}
-          </span>
-          {allOn ? "Quitar todos" : "Seleccionar todos"}
-          <span className="pv-faint ml-auto text-[11px] font-normal">{files.length} archivos</span>
-        </button>
+      <div className="flex flex-col gap-3.5">
+        <Segmented
+          options={[
+            { id: "copia", label: "Copia de seguridad" },
+            { id: "csv", label: "CSV para otra app" },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
 
-        {files.map((f) => {
-          const on = selected.includes(f.key);
-          return (
-            <div
-              key={f.key}
-              className="flex items-center gap-2.5 px-3 py-2.5"
-              style={{ borderRadius: "var(--radius)", border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`, background: "var(--surface-2)" }}
-            >
-              <button
-                type="button"
-                aria-pressed={on}
-                aria-label={`Incluir ${f.label}`}
-                onClick={() => toggle(f.key)}
-                className="grid h-4 w-4 shrink-0 place-items-center"
-                style={{ borderRadius: 4, border: `1.5px solid ${on ? "var(--accent)" : "var(--border-strong)"}`, background: on ? "var(--accent)" : "transparent", color: "var(--accent-fg)" }}
-              >
-                {on && <Check className="h-3 w-3" strokeWidth={3} />}
-              </button>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>
-                  {f.label} <span className="pv-faint text-[11px] font-normal">· {f.filename}</span>
-                </p>
-                <p className="pv-faint truncate text-[11px]">{f.description}</p>
-              </div>
-              <span className="pv-num shrink-0 text-[11px] font-semibold" style={{ color: "var(--muted)" }}>{formatNum(f.rows)} filas</span>
-              <button
-                type="button"
-                aria-label={`Descargar ${f.label} en CSV`}
-                title={`Descargar ${f.filename}`}
-                onClick={() => { downloadCsv(f.filename, f.content); setDone(`${f.filename} descargado`); }}
-                className="grid h-7 w-7 shrink-0 place-items-center transition-colors hover:!border-[var(--accent)]"
-                style={{ color: "var(--faint)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
-              >
-                <Download className="h-3.5 w-3.5" />
-              </button>
+        {mode === "copia" ? (
+          <>
+            <div style={{ padding: 14, borderRadius: "var(--radius)", background: "var(--accent-soft)", border: "1px solid var(--accent)" }}>
+              <p className="flex items-center gap-2 text-[12.5px] font-bold" style={{ color: "var(--accent)" }}>
+                <ShieldCheck className="h-4 w-4" /> Paquete completo para recuperarlo todo
+              </p>
+              <p className="pv-muted mt-1 text-[12px]">
+                Un ZIP con {formatNum(accounts.length)} cuentas, {formatNum(categories.length)} categorías, {formatNum(holdings.length)} productos,
+                {" "}{formatNum(operations)} operaciones y {formatNum(transactions.length)} movimientos.
+              </p>
             </div>
-          );
-        })}
+
+            {[
+              { title: "bilibank-copia.json", text: "Copia exacta de los datos. Es el archivo que restaura todo desde Ajustes.", icon: <Database className="h-4 w-4" /> },
+              { title: "copia-legible.html", text: "Documento para leer con calma (o imprimir en PDF): resumen, cuentas, categorías, inversiones, compras y todos los movimientos.", icon: <FileText className="h-4 w-4" /> },
+              { title: "datos-csv/", text: "Los mismos datos en CSV, por si algún día los necesitas en otra herramienta.", icon: <TableProperties className="h-4 w-4" /> },
+              { title: "LEEME.txt", text: "Qué contiene la carpeta y cómo restaurar la copia paso a paso.", icon: <FileArchive className="h-4 w-4" /> },
+            ].map((row) => (
+              <div key={row.title} className="flex items-start gap-2.5 px-3 py-2.5" style={{ borderRadius: "var(--radius)", border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                <span className="mt-0.5 shrink-0" style={{ color: "var(--accent)" }}>{row.icon}</span>
+                <div className="min-w-0">
+                  <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>{row.title}</p>
+                  <p className="pv-faint text-[11px]">{row.text}</p>
+                </div>
+              </div>
+            ))}
+
+            <div className="flex flex-wrap gap-2">
+              <Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={downloadOnlyJson}>Solo el JSON</Btn>
+              <Btn variant="ghost" size="sm" icon={<FileText className="h-3.5 w-3.5" />} onClick={downloadReadable}>Solo el documento legible</Btn>
+            </div>
+
+            <p className="pv-faint text-[11px]">
+              Para restaurar: Ajustes → Datos → «Importar / restaurar datos» → elige este ZIP (o el JSON de dentro).
+              Se recuperan los saldos, las operaciones y el historial tal y como están ahora.
+            </p>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="flex items-center gap-2.5 px-3 py-2.5 text-left text-[12.5px] font-semibold"
+              style={{ borderRadius: "var(--radius)", border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)" }}
+            >
+              <span
+                aria-hidden
+                className="grid h-4 w-4 shrink-0 place-items-center"
+                style={{ borderRadius: 4, border: `1.5px solid ${allOn ? "var(--accent)" : "var(--border-strong)"}`, background: allOn ? "var(--accent)" : "transparent", color: "var(--accent-fg)" }}
+              >
+                {allOn && <Check className="h-3 w-3" strokeWidth={3} />}
+              </span>
+              {allOn ? "Quitar todos" : "Seleccionar todos"}
+              <span className="pv-faint ml-auto text-[11px] font-normal">{files.length} archivos</span>
+            </button>
+
+            {files.map((f) => {
+              const on = selected.includes(f.key);
+              return (
+                <div
+                  key={f.key}
+                  className="flex items-center gap-2.5 px-3 py-2.5"
+                  style={{ borderRadius: "var(--radius)", border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`, background: "var(--surface-2)" }}
+                >
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    aria-label={`Incluir ${f.label}`}
+                    onClick={() => toggle(f.key)}
+                    className="grid h-4 w-4 shrink-0 place-items-center"
+                    style={{ borderRadius: 4, border: `1.5px solid ${on ? "var(--accent)" : "var(--border-strong)"}`, background: on ? "var(--accent)" : "transparent", color: "var(--accent-fg)" }}
+                  >
+                    {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>
+                      {f.label} <span className="pv-faint text-[11px] font-normal">· {f.filename}</span>
+                    </p>
+                    <p className="pv-faint truncate text-[11px]">{f.description}</p>
+                  </div>
+                  <span className="pv-num shrink-0 text-[11px] font-semibold" style={{ color: "var(--muted)" }}>{formatNum(f.rows)} filas</span>
+                  <button
+                    type="button"
+                    aria-label={`Descargar ${f.label} en CSV`}
+                    title={`Descargar ${f.filename}`}
+                    onClick={() => { downloadCsv(f.filename, f.content); setDone(`${f.filename} descargado`); }}
+                    className="grid h-7 w-7 shrink-0 place-items-center transition-colors hover:!border-[var(--accent)]"
+                    style={{ color: "var(--faint)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+
+            <p className="pv-faint text-[11px]">
+              Separador «;», decimales con coma y fechas DD/MM/AAAA: se abren directamente en Excel en español.
+              Cada fila es un registro del libro (las cuentas con su saldo y lo invertido, los movimientos con su saldo resultante).
+            </p>
+          </>
+        )}
 
         {done && (
           <p className="flex items-center gap-2 text-[12px]" style={{ color: "var(--pos)" }}>
             <Check className="h-4 w-4" /> {done}
           </p>
         )}
-        <p className="pv-faint text-[11px]">
-          Cada fila es un registro del libro: las cuentas incluyen su saldo y lo invertido, los movimientos su saldo resultante,
-          y las inversiones su valor, coste y rentabilidad.
-        </p>
       </div>
     </Modal>
   );
