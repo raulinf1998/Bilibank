@@ -69,6 +69,84 @@ function areaPath(path: string, w: number, h: number): string {
 }
 
 /* ------------------------------------------------------------------
+   Altura de la curva dibujada (para clavar marcas sobre la línea)
+------------------------------------------------------------------ */
+
+/**
+ * Altura (0–1) de la curva que dibuja `TrendChart` en una fracción de ancho
+ * (0–1), teniendo en cuenta el estilo: recta, escalón, curva suave o barra.
+ * Sirve para colocar marcas (por ejemplo, las compras) exactamente sobre la
+ * línea en lugar de «flotando» al lado.
+ */
+export function trendCurveAt(values: number[], style: ChartStyleKey, xFrac: number): number | null {
+  const W = 600;
+  const H = 200;
+  const shown = downsample(values, style);
+  if (shown.length < 2) return null;
+  const pts = scale(shown, W, H);
+  const x = Math.max(0, Math.min(1, xFrac)) * W;
+  const last = pts[pts.length - 1];
+
+  /* Barras: manda la altura del vértice más cercano. */
+  if (style === "brutal" || style === "solid") {
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p.x - x) < Math.abs(best.x - x)) best = p;
+    return best.y / H;
+  }
+
+  /* Escalón: se mantiene el valor hasta la mitad del tramo. */
+  if (style === "step") {
+    for (let i = 1; i < pts.length; i++) {
+      const mid = (pts[i - 1].x + pts[i].x) / 2;
+      if (x <= mid) return pts[i - 1].y / H;
+      if (x <= pts[i].x) return pts[i].y / H;
+    }
+    return last.y / H;
+  }
+
+  /* Curva suave: misma Bézier que `smoothPath`, resuelta por muestreo denso. */
+  const smooth = style === "gradient" || style === "neon" || style === "glass";
+  if (smooth) {
+    let bestY = pts[0].y;
+    let bestDx = Infinity;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] ?? pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] ?? p2;
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6;
+      const STEPS = 48;
+      for (let k = 0; k <= STEPS; k++) {
+        const u = k / STEPS;
+        const iu = 1 - u;
+        const bx = iu * iu * iu * p1.x + 3 * iu * iu * u * c1x + 3 * iu * u * u * c2x + u * u * u * p2.x;
+        const by = iu * iu * iu * p1.y + 3 * iu * iu * u * c1y + 3 * iu * u * u * c2y + u * u * u * p2.y;
+        const dx = Math.abs(bx - x);
+        if (dx < bestDx) {
+          bestDx = dx;
+          bestY = by;
+        }
+      }
+    }
+    return bestY / H;
+  }
+
+  /* Recta: interpolación lineal entre los dos vértices que rodean la X. */
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    if (x <= b.x) {
+      const w = b.x === a.x ? 0 : (x - a.x) / (b.x - a.x);
+      return (a.y * (1 - w) + b.y * w) / H;
+    }
+  }
+  return last.y / H;
+}
+
+/* ------------------------------------------------------------------
    Gráfica de tendencia (patrimonio / evolución de producto)
 ------------------------------------------------------------------ */
 

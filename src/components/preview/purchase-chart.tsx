@@ -11,17 +11,25 @@
      valor hoy = participaciones × precio actual del producto
      ganancia  = valor hoy − invertido
 
-   El punto se coloca sobre la curva usando la misma escala que `TrendChart`
-   (mismo downsample, mismo margen vertical), así que queda pegado a la línea.
+   Los puntos se colocan con MUY POCA tolerancia al error: se reutiliza el mismo
+   `downsample` y la misma escala vertical que `TrendChart`, y la altura se
+   interpola sobre la polilínea realmente dibujada, así que el punto queda
+   siempre pegado a la línea (no «flotando» por los lados).
+
+   Interacción:
+   · ratón encima → ficha; sale → se cierra
+   · clic (o toque) en un punto → ficha fijada; otro clic en el mismo punto o un
+     clic en cualquier otro sitio → se cierra
 */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ShoppingCart } from "lucide-react";
 import { chartColor } from "@/lib/colors";
 import { formatEUR, formatFullDate, formatNum, formatSigned } from "@/lib/format";
 import type { Holding, Operation } from "@/lib/mock";
 import { daysBetween, periodRange } from "@/lib/series";
-import { TrendChart, downsample } from "./charts";
+import type { ChartStyleKey } from "@/lib/themes";
+import { TrendChart, downsample, trendCurveAt } from "./charts";
 import { useArch } from "./state";
 
 /** Métricas de una compra concreta con el precio actual del producto. */
@@ -60,7 +68,31 @@ export function purchasePoints(h: Holding, period: string, series: number[]): Pu
   return points;
 }
 
-const PAD_Y = 0.12; // mismo margen vertical que `scale()` en charts.tsx
+/**
+ * Coordenadas (0–1) del marcador de una compra sobre la curva dibujada.
+ * La X es la fecha exacta de la compra dentro del periodo y la Y se toma de la
+ * propia curva que dibuja `TrendChart` (recta, escalón, curva suave o barra),
+ * así que el punto queda siempre sobre la línea.
+ */
+export function markerPosition(series: number[], style: ChartStyleKey, rawIndex: number): { x: number; y: number } | null {
+  const len = series.length;
+  if (len < 2) return null;
+  const i = Math.max(0, Math.min(len - 1, rawIndex));
+  let x = i / (len - 1);
+
+  /* Barras: cada barra ocupa su columna, así que el punto se centra en el
+     vértice (la barra) más cercano y no en un hueco entre dos barras. */
+  if (style === "solid" || style === "brutal") {
+    const shown = downsample(series, style);
+    if (shown.length >= 2) {
+      const v = Math.round(x * (shown.length - 1));
+      x = v / (shown.length - 1);
+    }
+  }
+
+  const y = trendCurveAt(series, style, x);
+  return y === null ? null : { x, y };
+}
 
 export function PriceChartWithPurchases({
   holding,
@@ -76,80 +108,104 @@ export function PriceChartWithPurchases({
   const { arch } = useArch();
   const style = arch.chartStyle;
   const color = chartColor(holding.colorIdx);
-  const [active, setActive] = useState<number | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  /* Tras cerrar una ficha con clic no debe reaparecer por seguir encima del punto. */
+  const muted = useRef(false);
+  const [hover, setHover] = useState<number | null>(null);
   const [pinned, setPinned] = useState<number | null>(null);
 
   const points = useMemo(() => purchasePoints(holding, period, series), [holding, period, series]);
   const visible = points.filter((p) => p.index !== null);
 
-  /* Misma escala que usa el gráfico para dibujar la curva (mismo downsample). */
-  const bounds = useMemo(() => {
-    const shown = downsample(series, style);
-    const min = Math.min(...shown);
-    const max = Math.max(...shown);
-    return { min, max, span: max - min || 1 };
-  }, [series, style]);
+  const position = (rawIndex: number) => markerPosition(series, style, rawIndex) ?? { x: 0, y: 0.5 };
 
-  const yFrac = (value: number) => {
-    const clamped = Math.min(bounds.max, Math.max(bounds.min, value));
-    return PAD_Y + (1 - (clamped - bounds.min) / bounds.span) * (1 - PAD_Y * 2);
-  };
+  /* Clic en cualquier otro sitio (dentro o fuera del gráfico) cierra la ficha. */
+  useEffect(() => {
+    if (pinned === null) return;
+    const onDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-purchase-dot]")) return;
+      setPinned(null);
+      muted.current = true;
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [pinned]);
 
-  const shownIndex = pinned ?? active;
-  const shownPoint = shownIndex !== null ? visible.find((p) => p.op.id === shownIndex) ?? null : null;
-  const shownX = shownPoint && shownPoint.index !== null ? (shownPoint.index / Math.max(1, series.length - 1)) * 100 : 0;
-  const shownY = shownPoint && shownPoint.index !== null ? yFrac(series[shownPoint.index]) * 100 : 0;
+  const shownId = pinned ?? hover;
+  const shownPoint = shownId !== null ? visible.find((p) => p.op.id === shownId) ?? null : null;
+  const shownPos = shownPoint && shownPoint.index !== null ? position(shownPoint.index) : null;
+  const shownX = shownPos ? shownPos.x * 100 : 0;
+  const shownY = shownPos ? shownPos.y * 100 : 0;
 
   /* La ficha se abre hacia el lado con más sitio y hacia arriba salvo que el punto esté alto. */
   const flipX = shownX > 62;
   const below = shownY < 42;
 
+  const toggle = (id: number) => {
+    if (pinned === id) {
+      setPinned(null);
+      setHover(null);
+      muted.current = true;
+    } else {
+      setPinned(id);
+      muted.current = false;
+    }
+  };
+
   return (
-    <div className="relative">
+    <div ref={wrapRef} className="relative">
       <TrendChart values={series} style={style} height={height} color={color} />
 
       {series.length > 1 &&
         visible.map((p) => {
           if (p.index === null) return null;
-          const x = (p.index / (series.length - 1)) * 100;
-          const y = yFrac(series[p.index]) * 100;
-          const isOn = shownIndex === p.op.id;
+          const { x, y } = position(p.index);
+          const isOn = shownId === p.op.id;
           const isPinned = pinned === p.op.id;
           return (
             <button
               key={p.op.id}
               type="button"
+              data-purchase-dot
               aria-label={`Compra del ${formatFullDate(p.date)}: invertido ${formatEUR(p.invested)}, ganancia ${formatSigned(p.gain)}`}
               aria-pressed={isPinned}
               title={`Compra del ${formatFullDate(p.date)}`}
-              onMouseEnter={() => setActive(p.op.id)}
-              onMouseLeave={() => setActive(null)}
-              onFocus={() => setActive(p.op.id)}
-              onBlur={() => setActive(null)}
+              onPointerEnter={() => {
+                if (!muted.current) setHover(p.op.id);
+              }}
+              onPointerLeave={() => {
+                muted.current = false;
+                setHover(null);
+              }}
+              onFocus={() => {
+                if (!muted.current) setHover(p.op.id);
+              }}
+              onBlur={() => setHover(null)}
               onClick={(e) => {
                 e.stopPropagation();
-                setPinned(pinned === p.op.id ? null : p.op.id);
+                toggle(p.op.id);
               }}
               className="absolute grid place-items-center"
               style={{
-                left: `${x}%`,
-                top: `${y}%`,
+                left: `${x * 100}%`,
+                top: `${y * 100}%`,
                 transform: "translate(-50%, -50%)",
-                width: 26,
-                height: 26,
+                width: 24,
+                height: 24,
                 cursor: "pointer",
                 zIndex: isOn ? 30 : 10,
               }}
             >
               <span
                 aria-hidden
-                className="grid place-items-center transition-transform"
+                className="grid place-items-center transition-all"
                 style={{
-                  width: isOn ? 15 : 11,
-                  height: isOn ? 15 : 11,
+                  width: isOn ? 14 : 10,
+                  height: isOn ? 14 : 10,
                   borderRadius: 999,
                   background: isOn ? "var(--pos)" : "var(--bg)",
-                  border: `2px solid ${isOn ? "var(--pos)" : "var(--pos)"}`,
+                  border: "2px solid var(--pos)",
                   boxShadow: isOn ? "0 0 0 4px color-mix(in srgb, var(--pos) 26%, transparent)" : "0 1px 3px rgba(0,0,0,.45)",
                 }}
               />
@@ -157,7 +213,7 @@ export function PriceChartWithPurchases({
           );
         })}
 
-      {shownPoint && (
+      {shownPoint && shownPos && (
         <div
           role="tooltip"
           className="pointer-events-none absolute z-40"
@@ -218,7 +274,7 @@ export function PriceChartWithPurchases({
       {visible.length > 0 && (
         <p className="pv-faint mt-1 text-[10.5px]">
           Pasa el ratón por un punto (o tócalo) para ver lo invertido y lo ganado con esa compra.
-          {pinned !== null ? " Toca otra vez para cerrar la ficha." : ""}
+          {pinned !== null ? " Toca el mismo punto o fuera de él para cerrar la ficha." : ""}
         </p>
       )}
       <p className="sr-only">
