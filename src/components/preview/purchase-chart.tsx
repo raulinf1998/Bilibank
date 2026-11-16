@@ -11,10 +11,13 @@
      valor hoy = participaciones × precio actual del producto
      ganancia  = valor hoy − invertido
 
-   Los puntos se colocan con MUY POCA tolerancia al error: se reutiliza el mismo
-   `downsample` y la misma escala vertical que `TrendChart`, y la altura se
-   interpola sobre la polilínea realmente dibujada, así que el punto queda
-   siempre pegado a la línea (no «flotando» por los lados).
+   Los puntos se colocan con MUY POCA tolerancia al error y en dos pasos:
+
+   1. La altura sale de `trendCurveAt`, que resuelve la curva que dibuja de
+      verdad `TrendChart` (recta, escalón, Bézier o barra).
+   2. La capa donde viven los puntos mide EXACTAMENTE lo mismo que el SVG del
+      gráfico, así que un `%` sobre ella cae píxel a píxel en la línea. La
+      leyenda y el texto de ayuda quedan FUERA de esa capa.
 
    Interacción:
    · ratón encima → ficha; sale → se cierra
@@ -108,9 +111,10 @@ export function PriceChartWithPurchases({
   const { arch } = useArch();
   const style = arch.chartStyle;
   const color = chartColor(holding.colorIdx);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  /* Tras cerrar una ficha con clic no debe reaparecer por seguir encima del punto. */
+  /* Tras cerrar una ficha con clic no debe reaparecer por seguir encima del
+     MISMO punto; en cuanto el puntero entra en otro punto, vuelve a funcionar. */
   const muted = useRef(false);
+  const mutedId = useRef<number | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [pinned, setPinned] = useState<number | null>(null);
 
@@ -127,6 +131,7 @@ export function PriceChartWithPurchases({
       if (target?.closest("[data-purchase-dot]")) return;
       setPinned(null);
       muted.current = true;
+      mutedId.current = pinned;
     };
     document.addEventListener("pointerdown", onDown, true);
     return () => document.removeEventListener("pointerdown", onDown, true);
@@ -147,115 +152,135 @@ export function PriceChartWithPurchases({
       setPinned(null);
       setHover(null);
       muted.current = true;
+      mutedId.current = id;
     } else {
       setPinned(id);
       muted.current = false;
+      mutedId.current = null;
     }
   };
 
   return (
-    <div ref={wrapRef} className="relative">
-      <TrendChart values={series} style={style} height={height} color={color} />
+    <div>
+      {/*
+        La capa de marcas mide EXACTAMENTE lo mismo que el SVG del gráfico
+        (mismo alto y mismo ancho), así que un porcentaje sobre ella coincide
+        con la curva. Antes los puntos se colocaban sobre el contenedor
+        completo, que también incluye la leyenda y el texto de ayuda: por eso
+        salían corridos hacia abajo y parecían «flotar» fuera de la línea.
+      */}
+      <div style={{ position: "relative", height, width: "100%" }}>
+        <TrendChart values={series} style={style} height={height} color={color} />
 
-      {series.length > 1 &&
-        visible.map((p) => {
-          if (p.index === null) return null;
-          const { x, y } = position(p.index);
-          const isOn = shownId === p.op.id;
-          const isPinned = pinned === p.op.id;
-          return (
-            <button
-              key={p.op.id}
-              type="button"
-              data-purchase-dot
-              aria-label={`Compra del ${formatFullDate(p.date)}: invertido ${formatEUR(p.invested)}, ganancia ${formatSigned(p.gain)}`}
-              aria-pressed={isPinned}
-              title={`Compra del ${formatFullDate(p.date)}`}
-              onPointerEnter={() => {
-                if (!muted.current) setHover(p.op.id);
-              }}
-              onPointerLeave={() => {
-                muted.current = false;
-                setHover(null);
-              }}
-              onFocus={() => {
-                if (!muted.current) setHover(p.op.id);
-              }}
-              onBlur={() => setHover(null)}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggle(p.op.id);
-              }}
-              className="absolute grid place-items-center"
-              style={{
-                left: `${x * 100}%`,
-                top: `${y * 100}%`,
-                transform: "translate(-50%, -50%)",
-                width: 24,
-                height: 24,
-                cursor: "pointer",
-                zIndex: isOn ? 30 : 10,
-              }}
-            >
-              <span
-                aria-hidden
-                className="grid place-items-center transition-all"
-                style={{
-                  width: isOn ? 14 : 10,
-                  height: isOn ? 14 : 10,
-                  borderRadius: 999,
-                  background: isOn ? "var(--pos)" : "var(--bg)",
-                  border: "2px solid var(--pos)",
-                  boxShadow: isOn ? "0 0 0 4px color-mix(in srgb, var(--pos) 26%, transparent)" : "0 1px 3px rgba(0,0,0,.45)",
+        {series.length > 1 &&
+          visible.map((p) => {
+            if (p.index === null) return null;
+            const { x, y } = position(p.index);
+            const isOn = shownId === p.op.id;
+            const isPinned = pinned === p.op.id;
+            return (
+              <button
+                key={p.op.id}
+                type="button"
+                data-purchase-dot
+                aria-label={`Compra del ${formatFullDate(p.date)}: invertido ${formatEUR(p.invested)}, ganancia ${formatSigned(p.gain)}`}
+                aria-pressed={isPinned}
+                title={`Compra del ${formatFullDate(p.date)}`}
+                onPointerEnter={() => {
+                  if (muted.current && mutedId.current !== p.op.id) {
+                    muted.current = false;
+                    mutedId.current = null;
+                  }
+                  if (!muted.current) setHover(p.op.id);
                 }}
-              />
-            </button>
-          );
-        })}
+                onPointerLeave={() => {
+                  muted.current = false;
+                  mutedId.current = null;
+                  setHover(null);
+                }}
+                onFocus={() => {
+                  if (muted.current && mutedId.current !== p.op.id) {
+                    muted.current = false;
+                    mutedId.current = null;
+                  }
+                  if (!muted.current) setHover(p.op.id);
+                }}
+                onBlur={() => setHover(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle(p.op.id);
+                }}
+                className="absolute grid place-items-center"
+                style={{
+                  left: `${x * 100}%`,
+                  top: `${y * 100}%`,
+                  transform: "translate(-50%, -50%)",
+                  width: 24,
+                  height: 24,
+                  cursor: "pointer",
+                  zIndex: isOn ? 30 : 10,
+                }}
+              >
+                <span
+                  aria-hidden
+                  className="grid place-items-center transition-all"
+                  style={{
+                    width: isOn ? 14 : 10,
+                    height: isOn ? 14 : 10,
+                    borderRadius: 999,
+                    background: isOn ? "var(--pos)" : "var(--bg)",
+                    border: "2px solid var(--pos)",
+                    boxShadow: isOn ? "0 0 0 4px color-mix(in srgb, var(--pos) 26%, transparent)" : "0 1px 3px rgba(0,0,0,.45)",
+                  }}
+                />
+              </button>
+            );
+          })}
 
-      {shownPoint && shownPos && (
-        <div
-          role="tooltip"
-          className="pointer-events-none absolute z-40"
-          style={{
-            left: `${shownX}%`,
-            top: `${shownY}%`,
-            transform: `translate(${flipX ? "calc(-100% - 12px)" : "12px"}, ${below ? "12px" : "calc(-100% - 12px)"})`,
-            minWidth: 214,
-            padding: "10px 12px",
-            background: "color-mix(in srgb, var(--bg) 94%, transparent)",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--radius)",
-            boxShadow: "0 18px 40px -16px rgba(0,0,0,.6)",
-          }}
-        >
-          <p className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--pos)" }}>
-            <ShoppingCart className="h-3 w-3" /> Compra · {formatFullDate(shownPoint.date)}
-          </p>
-          <p className="pv-faint mt-1 text-[11px]">
-            {formatNum(shownPoint.op.units)} participaciones a {formatNum(shownPoint.op.price)} €
-            {shownPoint.op.fees > 0 ? ` · ${formatNum(shownPoint.op.fees)} € comisión` : ""}
-          </p>
-          <div className="mt-2 flex flex-col gap-1 text-[11.5px]">
-            <span className="flex items-baseline justify-between gap-3">
-              <span className="pv-muted">Invertido</span>
-              <b className="pv-num" style={{ color: "var(--text)" }}>{formatEUR(shownPoint.invested)}</b>
-            </span>
-            <span className="flex items-baseline justify-between gap-3">
-              <span className="pv-muted">Valor hoy</span>
-              <b className="pv-num" style={{ color: "var(--text)" }}>{formatEUR(shownPoint.currentValue)}</b>
-            </span>
-            <span className="flex items-baseline justify-between gap-3">
-              <span className="pv-muted">{shownPoint.gain >= 0 ? "Ganado" : "Perdido"} con esta compra</span>
-              <b className="pv-num" style={{ color: shownPoint.gain >= 0 ? "var(--pos)" : "var(--neg)" }}>
-                {formatSigned(shownPoint.gain)} ({shownPoint.gain >= 0 ? "+" : ""}{formatNum(shownPoint.gainPct)} %)
-              </b>
-            </span>
+        {shownPoint && shownPos && (
+          <div
+            role="tooltip"
+            className="pointer-events-none absolute z-40"
+            style={{
+              left: `${shownX}%`,
+              top: `${shownY}%`,
+              transform: `translate(${flipX ? "calc(-100% - 12px)" : "12px"}, ${below ? "12px" : "calc(-100% - 12px)"})`,
+              minWidth: 214,
+              padding: "10px 12px",
+              background: "color-mix(in srgb, var(--bg) 94%, transparent)",
+              backdropFilter: "blur(10px)",
+              WebkitBackdropFilter: "blur(10px)",
+              border: "1px solid var(--border-strong)",
+              borderRadius: "var(--radius)",
+              boxShadow: "0 18px 40px -16px rgba(0,0,0,.6)",
+            }}
+          >
+            <p className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--pos)" }}>
+              <ShoppingCart className="h-3 w-3" /> Compra · {formatFullDate(shownPoint.date)}
+            </p>
+            <p className="pv-faint mt-1 text-[11px]">
+              {formatNum(shownPoint.op.units)} participaciones a {formatNum(shownPoint.op.price)} €
+              {shownPoint.op.fees > 0 ? ` · ${formatNum(shownPoint.op.fees)} € comisión` : ""}
+            </p>
+            <div className="mt-2 flex flex-col gap-1 text-[11.5px]">
+              <span className="flex items-baseline justify-between gap-3">
+                <span className="pv-muted">Invertido</span>
+                <b className="pv-num" style={{ color: "var(--text)" }}>{formatEUR(shownPoint.invested)}</b>
+              </span>
+              <span className="flex items-baseline justify-between gap-3">
+                <span className="pv-muted">Valor hoy</span>
+                <b className="pv-num" style={{ color: "var(--text)" }}>{formatEUR(shownPoint.currentValue)}</b>
+              </span>
+              <span className="flex items-baseline justify-between gap-3">
+                <span className="pv-muted">{shownPoint.gain >= 0 ? "Ganado" : "Perdido"} con esta compra</span>
+                <b className="pv-num" style={{ color: shownPoint.gain >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                  {formatSigned(shownPoint.gain)} ({shownPoint.gain >= 0 ? "+" : ""}{formatNum(shownPoint.gainPct)} %)
+                </b>
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] pv-muted">
         <span className="flex items-center gap-1.5">
