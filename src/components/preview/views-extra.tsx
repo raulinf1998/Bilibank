@@ -237,7 +237,7 @@ export function ChartsView() {
     () => holdings.map((h) => ({ h, w: windowSeries(productSeries(h), period) })).map((x) => ({ ...x, pc: changePct(x.w) })).sort((a, b) => b.pc - a.pc),
     [holdings, period],
   );
-  const accWin = useMemo(() => accounts.map((a) => ({ a, w: windowSeries(accountSeries(a, holdings), period) })), [accounts, holdings, period]);
+  const accWin = useMemo(() => accounts.map((a) => ({ a, w: windowSeries(accountSeries(a, holdings, transactions), period) })), [accounts, holdings, transactions, period]);
 
   /** Gasto acumulado dentro del periodo, tramo a tramo */
   const cumulative = flows.reduce<number[]>((acc, f) => [...acc, (acc[acc.length - 1] ?? 0) + f.b], []);

@@ -1162,20 +1162,28 @@ function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: 
   const [kind, setKind] = useState<AccountKind>(acc?.kind ?? "corriente");
   const [color, setColor] = useState<ColorRef>(acc?.colorIdx ?? 0);
   const [archived, setArchived] = useState(Boolean(acc?.archived));
-  /* Efectivo disponible de una cuenta de inversión (lo que aún no está invertido). */
-  const [cash, setCash] = useState(acc && acc.kind === "inversion" ? String(Math.round(cashOf(acc, holdings) * 100) / 100) : "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   if (!acc) return null;
 
   const prods = holdings.filter((h) => h.accountId === acc.id);
+  /* Efectivo actual de la cuenta: dinero inicial + todos sus movimientos. */
+  const cash = cashOf(acc, holdings, transactions);
+  const opening = typeof acc.cashOpening === "number" ? acc.cashOpening : 0;
+  /* Dinero que ha entrado o salido de la cuenta desde su saldo inicial. */
+  const movementNet = Math.round((cash - opening) * 100) / 100;
   const txCount = transactions.filter((t) => t.accountId === acc.id).length;
   const blocked = kind === "corriente" && prods.length > 0;
   const changed = kind !== acc.kind;
 
   const save = () => {
     const patch: Partial<Account> = { name: name.trim(), kind, colorIdx: color };
-    /* Al pasar a cuenta de inversión, el saldo actual se convierte en su efectivo. */
-    if (kind === "inversion") patch.cash = cash.trim() === "" ? 0 : Number(cash.replace(",", ".")) || 0;
+    /* Al pasar a cuenta de inversión arranca con el saldo que ya tenía: sus
+       movimientos se le siguen aplicando igual que en una corriente. */
+    if (kind === "inversion" && acc.kind !== "inversion") {
+      patch.cashOpening = Math.round((acc.balance - transactions.filter((t) => t.accountId === acc.id).reduce((sum, t) => sum + t.amount, 0)) * 100) / 100;
+    }
+    /* Y al volver a corriente, el saldo es el efectivo que mostraba. */
+    if (kind === "corriente" && acc.kind === "inversion") patch.balance = cash;
     updateAccount(acc.id, patch);
     if (archived !== Boolean(acc.archived)) setAccountArchived(acc.id, archived);
     onClose();
@@ -1197,10 +1205,15 @@ function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: 
         <Field label="Nombre"><Input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
         <Field label="Tipo de cuenta"><AccountKindPicker value={kind} onChange={setKind} /></Field>
         {kind === "inversion" && (
-          <Field label="Efectivo sin invertir (€)">
-            <Input inputMode="decimal" placeholder="0,00" value={cash} onChange={(e) => setCash(e.target.value.replace(",", "."))} />
-            <p className="pv-faint mt-1 text-[11px] leading-snug">Dinero disponible en la cuenta para comprar. Los productos no cuentan aquí: su valor se suma aparte.</p>
-          </Field>
+          <div className="rounded-lg p-3 text-[12px] leading-snug" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            <p className="font-semibold">
+              Efectivo sin invertir: <span className="pv-num">{formatEUR(cash)}</span>
+            </p>
+            <p className="pv-faint mt-1">
+              Sale del dinero con el que arranca la cuenta ({formatEUR(opening)}) más sus movimientos ({formatSigned(movementNet)}).
+              Los traspasos lo suben; las compras lo bajan; las ventas y los dividendos lo vuelven a subir.
+            </p>
+          </div>
         )}
         {blocked && (
           <p className="flex items-start gap-2 text-[12px] leading-snug" style={{ color: "var(--neg)" }}>

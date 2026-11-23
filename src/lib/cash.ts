@@ -2,18 +2,18 @@
 
    En una cuenta de inversión el dinero y los productos son cosas distintas:
 
-     efectivo  = `account.cash`  (lo que queda disponible para comprar)
+     efectivo  = dinero inicial (`cashOpening`) + suma de TODOS sus movimientos
      productos = suma del valor de mercado de sus productos
      valor     = efectivo + productos  (lo que vale la cuenta)
 
-   Antes sólo existía `account.balance` con el valor total, y el efectivo se
-   deducía restando el valor de la cartera. Con ese modelo una compra nunca
-   bajaba la caja (el dinero entraba y salía en la misma operación) y las
-   cuentas importadas de otra app mostraban siempre 0 €.
+   El efectivo es, por tanto, un valor **derivado**: no se guarda a mano ni lo
+   mueven los precios. Cada traspaso que entra lo sube, cada compra lo baja y
+   cada venta o dividendo lo vuelve a subir; si borras un movimiento, el
+   efectivo se recalcula solo. Es la misma regla que una cuenta corriente,
+   donde el saldo también sale del saldo inicial más sus movimientos.
 
-   `cashOf` y `valueOf` centralizan la lectura: si una cuenta antigua todavía
-   no tiene `cash` guardado se deduce (saldo − productos) y `ensureInvestmentCash`
-   lo fija para que los precios ya no lo muevan por su cuenta.
+   `cash` se mantiene en el modelo como caché del valor derivado (otros
+   módulos y copias antiguas lo leen), y `syncInvestmentCash` lo refresca.
 */
 
 import type { Account, Holding, Operation, Tx } from "./mock";
@@ -33,64 +33,89 @@ export function productsValueOf(accountId: number, holdings: Holding[]): number 
   );
 }
 
+/** Suma de todos los movimientos de una cuenta (traspasos incluidos). */
+export function movementsNet(accountId: number, transactions: Tx[]): number {
+  return round2(
+    transactions.filter((t) => t.accountId === accountId).reduce((sum, t) => sum + t.amount, 0),
+  );
+}
+
 /**
- * Efectivo disponible de una cuenta.
- * En las cuentas de inversión sale de `cash`; en las corrientes, del saldo.
+ * Efectivo disponible de una cuenta: el dinero con el que arranca más todo lo
+ * que ha entrado y salido. En las cuentas corrientes el saldo ya es eso, así
+ * que se devuelve tal cual.
  */
-export function cashOf(account: Account, holdings: Holding[]): number {
+export function cashOf(account: Account, holdings: Holding[], transactions: Tx[] = []): number {
   if (account.kind !== "inversion") return round2(account.balance);
-  if (typeof account.cash === "number" && Number.isFinite(account.cash)) return round2(account.cash);
-  /* Cuenta antigua sin `cash`: el saldo era valor total, así que el efectivo es
-     lo que sobraba por encima de los productos. */
-  return round2(Math.max(account.balance - productsValueOf(account.id, holdings), 0));
+  const opening = typeof account.cashOpening === "number" ? account.cashOpening : 0;
+  return round2(opening + movementsNet(account.id, transactions));
 }
 
 /** Valor de la cuenta: efectivo + productos (en las corrientes, el saldo). */
-export function valueOf(account: Account, holdings: Holding[]): number {
+export function valueOf(account: Account, holdings: Holding[], transactions: Tx[] = []): number {
   if (account.kind !== "inversion") return round2(account.balance);
-  return round2(cashOf(account, holdings) + productsValueOf(account.id, holdings));
+  return round2(cashOf(account, holdings, transactions) + productsValueOf(account.id, holdings));
 }
 
 /**
- * Migra las cuentas de inversión antiguas, que guardaban en `balance` el valor
- * total (productos + efectivo).
+ * Migra las cuentas de inversión antiguas, que no tenían dinero inicial
+ * (`cashOpening`).
  *
- * Se fija `cash` con el efectivo que se deducía hasta ahora y se marcan sus
- * operaciones como ya pagadas: ese dinero ya estaba dentro del saldo guardado,
- * así que volver a aplicarlo dejaría la caja en negativo.
+ * Regla: el efectivo manda el libro. La cuenta arranca en 0 y su caja es la
+ * suma de todos sus movimientos, así que cada gasto que ya está en la lista
+ * (aunque lo anotara la versión anterior) descuenta de verdad. Si una cuenta
+ * arrastra más gastos que traspasos, su caja saldrá negativa y la app avisa de
+ * que faltan aportaciones por registrar.
+ *
+ * Las compras importadas de otra app no se tocan: su gasto ya está en
+ * `transactions.csv` y sus operaciones siguen marcadas como pagadas para que el
+ * botón «Anotar» no cree movimientos duplicados.
  */
 export function migrateInvestmentCash(
   accounts: Account[],
   holdings: Holding[],
+  transactions: Tx[],
 ): { accounts: Account[]; holdings: Holding[]; migrated: number } {
   const legacy = new Set(
     accounts
-      .filter((a) => a.kind === "inversion" && !(typeof a.cash === "number" && Number.isFinite(a.cash)))
+      .filter((a) => a.kind === "inversion" && typeof a.cashOpening !== "number")
       .map((a) => a.id),
   );
   if (!legacy.size) return { accounts, holdings, migrated: 0 };
+
   const nextAccounts = accounts.map((a) =>
-    legacy.has(a.id) ? { ...a, cash: round2(Math.max(a.balance - productsValueOf(a.id, holdings), 0)) } : a,
+    legacy.has(a.id) ? { ...a, cashOpening: 0, cash: cashOf({ ...a, cashOpening: 0 }, holdings, transactions) } : a,
   );
-  const nextHoldings = holdings.map((h) =>
-    legacy.has(h.accountId) && h.operations.some((op) => !op.settled)
-      ? { ...h, operations: h.operations.map((op) => (op.settled ? op : { ...op, settled: true })) }
-      : h,
-  );
-  return { accounts: nextAccounts, holdings: nextHoldings, migrated: legacy.size };
+  return { accounts: nextAccounts, holdings, migrated: legacy.size };
+}
+
+/**
+ * Refresca el efectivo guardado en las cuentas de inversión a partir del libro.
+ * Se llama cuando cambian los movimientos o las cuentas.
+ */
+export function syncInvestmentCash(accounts: Account[], holdings: Holding[], transactions: Tx[]): Account[] {
+  let changed = false;
+  const next = accounts.map((a) => {
+    if (a.kind !== "inversion") return a;
+    const cash = cashOf(a, holdings, transactions);
+    if (a.cash === cash) return a;
+    changed = true;
+    return { ...a, cash };
+  });
+  return changed ? next : accounts;
 }
 
 /** Suma del efectivo disponible en todas las cuentas de inversión. */
-export function investmentCash(accounts: Account[], holdings: Holding[]): number {
+export function investmentCash(accounts: Account[], holdings: Holding[], transactions: Tx[] = []): number {
   return round2(
-    accounts.filter((a) => a.kind === "inversion").reduce((sum, a) => sum + cashOf(a, holdings), 0),
+    accounts.filter((a) => a.kind === "inversion").reduce((sum, a) => sum + cashOf(a, holdings, transactions), 0),
   );
 }
 
 /** Suma del valor de las cuentas de inversión (efectivo + productos). */
-export function investmentValue(accounts: Account[], holdings: Holding[]): number {
+export function investmentValue(accounts: Account[], holdings: Holding[], transactions: Tx[] = []): number {
   return round2(
-    accounts.filter((a) => a.kind === "inversion").reduce((sum, a) => sum + valueOf(a, holdings), 0),
+    accounts.filter((a) => a.kind === "inversion").reduce((sum, a) => sum + valueOf(a, holdings, transactions), 0),
   );
 }
 

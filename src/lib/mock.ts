@@ -23,8 +23,16 @@ export interface Account {
    * Sólo cuentas de inversión: dinero disponible sin invertir.
    * El valor de la cuenta es `cash + valor de sus productos`.
    * En las cuentas corrientes el efectivo es `balance`.
+   *
+   * `cash` es un valor derivado: sale de `cashOpening` más la suma de todos los
+   * movimientos de la cuenta (ver `lib/cash.ts`). No se edita a mano.
    */
   cash?: number;
+  /**
+   * Sólo cuentas de inversión: dinero con el que la cuenta arranca antes de sus
+   * movimientos. Es lo único «fijo» de la caja; todo lo demás son movimientos.
+   */
+  cashOpening?: number;
 }
 
 export interface Subcategory {
@@ -143,10 +151,10 @@ export const ACCOUNTS: Account[] = [
   { id: 4, name: "Cuenta Ahorro", kind: "corriente", balance: 6400.0, initialBalance: 4200, colorIdx: 3, history: hist(6400, 180, 4) },
   { id: 5, name: "Cuenta Remunerada", kind: "corriente", balance: 12000.0, initialBalance: 10000, colorIdx: 4, history: hist(12000, 160, 5) },
   { id: 6, name: "Efectivo", kind: "corriente", balance: 140.0, initialBalance: 200, colorIdx: 5, history: hist(140, -4, 6) },
-  { id: 7, name: "Cartera Indexada", kind: "inversion", balance: 40500, initialBalance: 30000, colorIdx: 8, history: hist(38420, 820, 7) },
-  { id: 8, name: "ETFs y acciones", kind: "inversion", balance: 24500, initialBalance: 15000, colorIdx: 1, history: hist(22200, 440, 8) },
-  { id: 9, name: "Cripto", kind: "inversion", balance: 3361.4, initialBalance: 2730, colorIdx: 6, history: hist(3361, 32, 9) },
-  { id: 10, name: "Plan de Pensiones", kind: "inversion", balance: 9241.12, initialBalance: 8400, colorIdx: 9, history: hist(9241, 72, 10) },
+  { id: 7, name: "Cartera Indexada", kind: "inversion", balance: 40500, cash: 0, cashOpening: 0, initialBalance: 30000, colorIdx: 8, history: hist(38420, 820, 7) },
+  { id: 8, name: "ETFs y acciones", kind: "inversion", balance: 24500, cash: 0, cashOpening: 0, initialBalance: 15000, colorIdx: 1, history: hist(22200, 440, 8) },
+  { id: 9, name: "Cripto", kind: "inversion", balance: 3361.4, cash: 0, cashOpening: 0, initialBalance: 2730, colorIdx: 6, history: hist(3361, 32, 9) },
+  { id: 10, name: "Plan de Pensiones", kind: "inversion", balance: 9241.12, cash: 0, cashOpening: 0, initialBalance: 8400, colorIdx: 9, history: hist(9241, 72, 10) },
 ];
 
 export const CURRENT_ACCOUNTS = ACCOUNTS.filter((a) => a.kind === "corriente");
