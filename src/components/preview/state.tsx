@@ -17,6 +17,7 @@ import {
 } from "@/lib/mock";
 import { defaultPeriod, setTodayReference } from "@/lib/series";
 import { removeTransaction } from "@/lib/ledger";
+import { cashOf, cashOperation, migrateInvestmentCash, operationCashDelta, operationConcept, operationSign } from "@/lib/cash";
 import { shortDate, stablePrice, todayIso, withPrice } from "@/lib/market";
 import { demoteCategory as demoteInTree, moveItem, moveSubcategory as moveSubInTree, promoteSubcategory as promoteInTree, remapTransaction } from "@/lib/category-tree";
 import type { ArchetypeDef, DesignConfig, DonutKey } from "@/lib/themes";
@@ -168,9 +169,15 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   const [period, setPeriod] = useState<string>(() => defaultPeriod());
   const [toast, setToast] = useState<string | null>(null);
 
-  const [accounts, setAccounts] = useState<Account[]>(initialData?.accounts?.length ? initialData.accounts : ACCOUNTS);
+  /* Las cuentas de inversión antiguas guardaban el valor total en `balance`:
+     al cargar se separa su efectivo (y sus compras ya pagadas) para que los
+     precios no muevan la caja. */
+  const seedAccounts = initialData?.accounts?.length ? initialData.accounts : ACCOUNTS;
+  const seedHoldings = initialData?.holdings?.length ? initialData.holdings : HOLDINGS;
+  const trimmed = useMemo(() => migrateInvestmentCash(seedAccounts, seedHoldings), [seedAccounts, seedHoldings]);
+  const [accounts, setAccounts] = useState<Account[]>(trimmed.accounts);
   const [categories, setCategories] = useState<Category[]>(initialData?.categories?.length ? initialData.categories : CATEGORIES);
-  const [holdings, setHoldings] = useState<Holding[]>(initialData?.holdings?.length ? initialData.holdings : HOLDINGS);
+  const [holdings, setHoldings] = useState<Holding[]>(trimmed.holdings);
   const [transactions, setTransactions] = useState<Tx[]>(initialData?.transactions ? initialData.transactions : TRANSACTIONS);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
@@ -237,10 +244,18 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   const addTransaction = useCallback(
     (tx: Omit<Tx, "id">) => {
       setTransactions((list) => sortTx([{ ...tx, id: Math.max(0, ...list.map((t) => t.id)) + 1 }, ...list]));
-      setAccounts((list) => list.map((a) => (a.id === tx.accountId ? { ...a, balance: a.balance + tx.amount } : a)));
+      setAccounts((list) =>
+        list.map((a) => {
+          if (a.id !== tx.accountId) return a;
+          /* En una cuenta de inversión el efectivo es aparte del valor de los
+             productos: el movimiento mueve la caja, no el saldo total. */
+          if (a.kind === "inversion") return { ...a, cash: Math.round((cashOf(a, holdings) + tx.amount) * 100) / 100 };
+          return { ...a, balance: a.balance + tx.amount };
+        }),
+      );
       flash(tx.amount >= 0 ? "Ingreso registrado" : "Gasto registrado");
     },
-    [flash],
+    [holdings, flash],
   );
 
   const addTransfer = useCallback(
@@ -255,10 +270,16 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
           ...list,
         ]);
       });
-      setAccounts((list) => list.map((a) => (a.id === from ? { ...a, balance: a.balance - amount } : a.id === to ? { ...a, balance: a.balance + amount } : a)));
+      /* El traspaso mueve efectivo: en las cuentas de inversión la caja, en las
+         corrientes el saldo. */
+      const move = (a: Account, delta: number): Account =>
+        a.kind === "inversion"
+          ? { ...a, cash: Math.round((cashOf(a, holdings) + delta) * 100) / 100 }
+          : { ...a, balance: Math.round((a.balance + delta) * 100) / 100 };
+      setAccounts((list) => list.map((a) => (a.id === from ? move(a, -amount) : a.id === to ? move(a, amount) : a)));
       flash("Traspaso registrado");
     },
-    [accounts, flash],
+    [accounts, holdings, flash],
   );
 
   const addAccount = useCallback(
@@ -268,35 +289,6 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
         return [...list, { ...a, id, initialBalance: a.balance, history: Array.from({ length: 12 }, () => a.balance) }];
       });
       flash("Cuenta creada");
-    },
-    [flash],
-  );
-
-  const addHolding = useCallback(
-    (h: NewHolding) => {
-      setHoldings((list) => {
-        const id = Math.max(0, ...list.map((x) => x.id)) + 1;
-        const prices = Array.from({ length: 24 }, (_, i) => h.price * (0.92 + (i / 23) * 0.08));
-        const { country, nickname, category, ...rest } = h;
-        return [
-          ...list,
-          {
-            ...rest,
-            id,
-            nickname: nickname?.trim() || rest.ticker,
-            category: category ?? "Fondo indexado",
-            top: [["Sin desglose", 100]] as [string, number][],
-            sectors: [["Sin clasificar", 100]] as [string, number][],
-            countries: [[country ?? "Sin clasificar", 100]] as [string, number][],
-            contrib: [...Array(23).fill(0), h.invested] as number[],
-            prices,
-            spark: prices.filter((_, i) => i % 2 === 1),
-            change1d: 0,
-            operations: [{ id: 1, date: "2026-02-24", type: "compra", units: h.units, price: h.invested / Math.max(h.units, 1e-9), fees: 0 }],
-          },
-        ];
-      });
-      flash("Producto añadido a la cartera");
     },
     [flash],
   );
@@ -320,12 +312,13 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   };
 
   /* ------------------------------------------------------------------
-     Compras de productos → movimiento de gasto en la categoría «Inversiones»
+     Operaciones de productos → movimiento de gasto/ingreso «Inversiones»
 
      El movimiento se registra en la cuenta del producto para que aparezca en
-     su lista de movimientos. NO se toca `account.balance`: en las cuentas de
-     inversión el saldo se deduce del valor de los productos, así que restarlo
-     otra vez descontaría el dinero dos veces.
+     su lista de movimientos y mueve el **efectivo** de la cuenta:
+     las compras y aportaciones lo bajan; las ventas y los dividendos lo suben.
+     En las cuentas de inversión el valor de la cuenta es efectivo + productos,
+     así que comprar no cambia el total: cambia el reparto.
   ------------------------------------------------------------------ */
 
   /** Categoría «Inversiones» (se crea la primera vez, con su subcategoría). */
@@ -355,56 +348,71 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   }, [categories]);
 
   /**
-   * Ajusta el saldo de la cuenta al registrar o quitar una compra.
-   * En las cuentas de inversión el saldo ya incluye el valor de los productos,
-   * así que no se toca; en las cuentas corrientes el dinero sí sale de la cuenta.
+   * Ajusta el efectivo de la cuenta al registrar o quitar el movimiento de una
+   * operación. `amount` va con signo: negativo si sale dinero (compra), positivo
+   * si entra (venta o dividendo).
+   *
+   * En las cuentas de inversión se toca `cash` (el saldo total es efectivo +
+   * productos y lo componen las vistas). En las corrientes el efectivo es el
+   * propio saldo.
    */
-  const settlePurchase = useCallback((accountId: number, spent: number) => {
-    setAccounts((list) =>
-      list.map((a) =>
-        a.id === accountId && a.kind === "corriente"
-          ? { ...a, balance: Math.round((a.balance - spent) * 100) / 100 }
-          : a,
-      ),
-    );
-  }, []);
+  const settlePurchase = useCallback(
+    (accountId: number, amount: number) => {
+      setAccounts((list) =>
+        list.map((a) => {
+          if (a.id !== accountId) return a;
+          if (a.kind === "inversion")
+            return { ...a, cash: Math.round((cashOf(a, holdings) + amount) * 100) / 100 };
+          return { ...a, balance: Math.round((a.balance + amount) * 100) / 100 };
+        }),
+      );
+    },
+    [holdings],
+  );
 
-  /** Alta del movimiento asociado a una compra. */
+  /** Alta del movimiento (gasto o ingreso) asociado a una operación del producto. */
   const pushPurchaseMovement = useCallback(
     (product: Holding, operation: Omit<Operation, "id">, operationId: number) => {
       const { categoryId, subcategoryId } = investmentCategory();
-      const total = Math.round((operation.units * operation.price + operation.fees) * 100) / 100;
+      const amount = operationCashDelta(operation);
       setTransactions((list) => {
         const id = Math.max(0, ...list.map((t) => t.id)) + 1;
         return sortTx([
           {
             id,
             date: operation.date,
-            concept: `Compra ${product.nickname || product.ticker}`,
+            concept: operationConcept(operation, product.nickname || product.ticker),
             categoryId,
             subcategoryId,
             accountId: product.accountId,
-            amount: -Math.abs(total),
-            note: `${operation.units} × ${operation.price} €${operation.fees ? ` + ${operation.fees} € de comisiones` : ""}`,
+            amount,
+            note:
+              operation.type === "dividendo"
+                ? `${operation.price} € por dividendo`
+                : `${operation.units} × ${operation.price} €${operation.fees ? ` ${operationSign(operation) < 0 ? "+" : "−"} ${operation.fees} € de comisiones` : ""}`,
             productId: product.id,
             operationId,
           },
           ...list,
         ]);
       });
-      settlePurchase(product.accountId, total);
+      settlePurchase(product.accountId, amount);
     },
     [investmentCategory, settlePurchase],
   );
 
-  /** Actualiza el movimiento asociado a una operación ya existente. */
+  /** Actualiza (o borra) el movimiento asociado a una operación ya existente. */
   const syncPurchaseMovement = useCallback(
     (product: Holding, operationId: number, operation: Omit<Operation, "id"> | null) => {
       const linked = transactions.find((t) => t.productId === product.id && t.operationId === operationId);
-      if (!linked) return;
-      const previous = -linked.amount;
-      const total = operation ? Math.round((operation.units * operation.price + operation.fees) * 100) / 100 : 0;
-      settlePurchase(product.accountId, total - previous);
+      if (!linked) {
+        /* La operación no tenía movimiento (importada sin gasto): se crea si mueve dinero. */
+        if (operation) pushPurchaseMovement(product, operation, operationId);
+        return;
+      }
+      const next = operation ? operationCashDelta(operation) : 0;
+      /* Lo ya aplicado tiene signo contrario al importe del movimiento guardado. */
+      settlePurchase(product.accountId, next + linked.amount);
       setTransactions((list) => {
         if (!operation) return list.filter((t) => t.id !== linked.id);
         return sortTx(
@@ -413,15 +421,80 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
               ? {
                   ...t,
                   date: operation.date,
-                  amount: -Math.abs(total),
-                  note: `${operation.units} × ${operation.price} €${operation.fees ? ` + ${operation.fees} € de comisiones` : ""}`,
+                  concept: operationConcept(operation, product.nickname || product.ticker),
+                  amount: next,
+                  note:
+                    operation.type === "dividendo"
+                      ? `${operation.price} € por dividendo`
+                      : `${operation.units} × ${operation.price} €${operation.fees ? ` · ${operation.fees} € de comisiones` : ""}`,
                 }
               : t,
           ),
         );
       });
     },
-    [transactions, settlePurchase],
+    [transactions, pushPurchaseMovement, settlePurchase],
+  );
+
+  const addHolding = useCallback(
+    (h: NewHolding) => {
+      /* Compra inicial del producto, con la fecha real del alta. */
+      const firstOp: Operation = {
+        id: 1,
+        date: todayIso(),
+        type: "compra",
+        units: h.units,
+        price: h.invested / Math.max(h.units, 1e-9),
+        fees: 0,
+      };
+      setHoldings((list) => {
+        const id = Math.max(0, ...list.map((x) => x.id)) + 1;
+        const prices = Array.from({ length: 24 }, (_, i) => h.price * (0.92 + (i / 23) * 0.08));
+        const { country, nickname, category, ...rest } = h;
+        return [
+          ...list,
+          {
+            ...rest,
+            id,
+            nickname: nickname?.trim() || rest.ticker,
+            category: category ?? "Fondo indexado",
+            top: [["Sin desglose", 100]] as [string, number][],
+            sectors: [["Sin clasificar", 100]] as [string, number][],
+            countries: [[country ?? "Sin clasificar", 100]] as [string, number][],
+            contrib: [...Array(23).fill(0), h.invested] as number[],
+            prices,
+            spark: prices.filter((_, i) => i % 2 === 1),
+            change1d: 0,
+            operations: [firstOp],
+          },
+        ];
+      });
+      /* La compra inicial también sale del efectivo de la cuenta: se anota como
+         gasto de «Inversiones» igual que cualquier compra posterior. */
+      if (firstOp.units > 0) {
+        const { categoryId, subcategoryId } = investmentCategory();
+        const amount = operationCashDelta(firstOp);
+        setTransactions((list) => {
+          const id = Math.max(0, ...list.map((t) => t.id)) + 1;
+          return sortTx([
+            {
+              id,
+              date: firstOp.date,
+              concept: operationConcept(firstOp, h.nickname?.trim() || h.ticker),
+              categoryId,
+              subcategoryId,
+              accountId: h.accountId,
+              amount,
+              note: `${firstOp.units} × ${firstOp.price} €`,
+            },
+            ...list,
+          ]);
+        });
+        settlePurchase(h.accountId, amount);
+      }
+      flash("Producto añadido a la cartera y compra anotada en Inversiones");
+    },
+    [investmentCategory, settlePurchase, flash],
   );
 
   const addOperation = useCallback(
@@ -434,8 +507,14 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
           return { ...withOp(h, op, 1), operations: [...h.operations, { ...op, id }] };
         }),
       );
-      if (product && op.type === "compra") pushPurchaseMovement(product, op, id);
-      flash(op.type === "compra" ? "Compra registrada y anotada en Inversiones" : "Operación registrada");
+      if (product && cashOperation(op)) pushPurchaseMovement(product, op, id);
+      flash(
+        op.type === "compra"
+          ? "Compra registrada y anotada en Inversiones"
+          : op.type === "venta"
+            ? "Venta registrada · el dinero entra en el efectivo de la cuenta"
+            : "Operación registrada",
+      );
     },
     [holdings, pushPurchaseMovement, flash],
   );
@@ -452,7 +531,7 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
         }),
       );
       const product = holdings.find((h) => h.id === productId);
-      if (product) syncPurchaseMovement(product, opId, op.type === "compra" ? op : null);
+      if (product) syncPurchaseMovement(product, opId, cashOperation(op) ? op : null);
       flash("Operación actualizada");
     },
     [holdings, syncPurchaseMovement, flash],
@@ -468,49 +547,48 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
           return { ...withOp(h, old, -1), operations: h.operations.filter((o) => o.id !== opId) };
         }),
       );
+      /* El movimiento de dinero de esa operación desaparece con ella y el
+         efectivo vuelve a como estaba antes de la compra/venta. */
+      const linked = transactions.find((t) => t.productId === productId && t.operationId === opId);
+      if (linked) settlePurchase(linked.accountId, linked.amount);
       setTransactions((list) => list.filter((t) => !(t.productId === productId && t.operationId === opId)));
       flash("Operación eliminada");
     },
-    [flash],
+    [transactions, settlePurchase, flash],
   );
 
   /**
    * Borra un producto de una cuenta de inversión.
    *
-   * Se lleva por delante sus operaciones y los movimientos de compra que se
-   * anotaron en «Inversiones», y deja el saldo de las cuentas corrientes como
-   * estaba antes de esas compras (el dinero vuelve a estar disponible, igual
-   * que al borrar un movimiento de compra a mano).
-   *
-   * En las cuentas de inversión no se toca `account.balance`: su saldo es el
-   * valor de los productos, que acaba de desaparecer.
+   * Se lleva por delante sus operaciones y los movimientos de dinero que
+   * generaron (compras, ventas, dividendos) y devuelve el efectivo a como
+   * estaba antes de esas operaciones, tanto en cuentas corrientes como de
+   * inversión. El valor de los productos desaparece con el producto.
    */
   const deleteHolding = useCallback(
     (id: number) => {
       const product = holdings.find((h) => h.id === id);
       if (!product) return false;
       const purchases = transactions.filter((t) => t.productId === id);
-      /* Devolver el dinero de las compras hechas desde cuentas corrientes. */
-      for (const tx of purchases) {
-        const acc = accounts.find((a) => a.id === tx.accountId);
-        if (acc?.kind === "corriente") settlePurchase(tx.accountId, tx.amount);
-      }
+      /* Devolver el dinero de cada movimiento generado por sus operaciones. */
+      for (const tx of purchases) settlePurchase(tx.accountId, tx.amount);
       setHoldings((list) => list.filter((h) => h.id !== id));
       setTransactions((list) => list.filter((t) => t.productId !== id));
       setRoute((r) => (r.productId === id ? { page: r.page } : r));
-      flash(`${product.nickname || product.ticker} eliminado · ${purchases.length} movimientos de compra borrados`);
+      flash(`${product.nickname || product.ticker} eliminado · ${purchases.length} movimientos borrados`);
       return true;
     },
-    [holdings, transactions, accounts, settlePurchase, flash],
+    [holdings, transactions, settlePurchase, flash],
   );
 
   /**
-   * Crea los movimientos de compra que faltan de un producto.
+   * Crea los movimientos de dinero que faltan de un producto.
    *
-   * Cada compra (o aportación) del producto debería tener su gasto en la cuenta
-   * vinculada; al importar de otra app llegan las operaciones pero no los
-   * gastos. Este botón rellena solo las que faltan, sin duplicar nada, y ajusta
-   * el saldo con la misma regla que el alta normal de una compra.
+   * Cada operación (compra, aportación, venta o dividendo) debería tener su
+   * movimiento en la cuenta vinculada; al importar de otra app llegan las
+   * operaciones pero no los movimientos. Este botón rellena solo los que
+   * faltan, sin duplicar nada, y ajusta el efectivo con la misma regla que el
+   * alta normal de una operación.
    */
   const syncProductExpenses = useCallback(
     (productId: number) => {
@@ -518,27 +596,28 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       if (!product) return 0;
       const linked = transactions.filter((t) => t.productId === productId);
       const done = new Set(linked.map((t) => t.operationId));
-      const missing = product.operations.filter(
-        (op) => (op.type === "compra" || op.type === "aportacion") && !done.has(op.id) && op.units > 0 && op.date,
-      );
+      const missing = product.operations.filter((op) => !done.has(op.id) && cashOperation(op));
       if (!missing.length) {
-        flash("Todas las compras de este producto ya están anotadas como gasto");
+        flash("Todas las operaciones de este producto ya están anotadas en la cuenta");
         return 0;
       }
       const { categoryId, subcategoryId } = investmentCategory();
-      let total = 0;
+      let delta = 0;
       const rows: Tx[] = missing.map((op) => {
-        const amount = Math.round((op.units * op.price + op.fees) * 100) / 100;
-        total += amount;
+        const amount = operationCashDelta(op);
+        delta += amount;
         return {
           id: 0,
           date: op.date,
-          concept: `Compra ${product.nickname || product.ticker}`,
+          concept: operationConcept(op, product.nickname || product.ticker),
           categoryId,
           subcategoryId,
           accountId: product.accountId,
-          amount: -Math.abs(amount),
-          note: `${op.units} × ${op.price} €${op.fees ? ` + ${op.fees} € de comisiones` : ""}`,
+          amount,
+          note:
+            op.type === "dividendo"
+              ? `${op.price} € por dividendo`
+              : `${op.units} × ${op.price} €${op.fees ? ` · ${op.fees} € de comisiones` : ""}`,
           productId,
           operationId: op.id,
         };
@@ -547,8 +626,13 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
         let id = Math.max(0, ...list.map((t) => t.id));
         return sortTx([...rows.map((row) => ({ ...row, id: ++id })), ...list]);
       });
-      settlePurchase(product.accountId, total);
-      flash(`${missing.length} ${missing.length === 1 ? "gasto anotado" : "gastos anotados"} en la cuenta del producto`);
+      settlePurchase(product.accountId, Math.round(delta * 100) / 100);
+      const buys = missing.filter((op) => operationSign(op) < 0).length;
+      const sells = missing.length - buys;
+      flash(
+        `${missing.length} ${missing.length === 1 ? "movimiento anotado" : "movimientos anotados"} en la cuenta` +
+          (buys && sells ? ` · ${buys} de compra y ${sells} de venta/dividendo` : ""),
+      );
       return missing.length;
     },
     [holdings, transactions, investmentCategory, settlePurchase, flash],
@@ -598,18 +682,20 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       if (!old || old.categoryId === 0) return;
       setTransactions((list) => sortTx(list.map((t) => (t.id === id ? { ...next, id, operationId: old.operationId, productId: old.productId } : t))));
       if (!old.operationId) {
+        /* Mueve el efectivo: el importe sale de la cuenta anterior y entra en la nueva. */
         setAccounts((list) =>
           list.map((a) => {
-            let b = a.balance;
-            if (a.id === old.accountId) b -= old.amount;
-            if (a.id === next.accountId) b += next.amount;
-            return b === a.balance ? a : { ...a, balance: b };
+            const applied = (a.id === old.accountId ? -old.amount : 0) + (a.id === next.accountId ? next.amount : 0);
+            if (!applied) return a;
+            if (a.kind === "inversion")
+              return { ...a, cash: Math.round((cashOf(a, holdings) + applied) * 100) / 100 };
+            return { ...a, balance: Math.round((a.balance + applied) * 100) / 100 };
           }),
         );
       }
       flash("Movimiento actualizado");
     },
-    [transactions, flash],
+    [transactions, holdings, flash],
   );
 
   const updateTransfer = useCallback(
@@ -631,16 +717,19 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       });
       setAccounts((list) =>
         list.map((a) => {
-          let b = a.balance;
-          for (const l of legs) if (a.id === l.accountId) b -= l.amount;
-          if (a.id === v.from) b -= v.amount;
-          if (a.id === v.to) b += v.amount;
-          return b === a.balance ? a : { ...a, balance: b };
+          let delta = 0;
+          for (const l of legs) if (a.id === l.accountId) delta -= l.amount;
+          if (a.id === v.from) delta -= v.amount;
+          if (a.id === v.to) delta += v.amount;
+          if (!delta) return a;
+          if (a.kind === "inversion")
+            return { ...a, cash: Math.round((cashOf(a, holdings) + delta) * 100) / 100 };
+          return { ...a, balance: Math.round((a.balance + delta) * 100) / 100 };
         }),
       );
       flash("Traspaso actualizado");
     },
-    [transactions, accounts, flash],
+    [transactions, accounts, holdings, flash],
   );
 
   const updateAccount = useCallback(
@@ -727,10 +816,24 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   );
   const updateHolding = useCallback(
     (id: number, patch: Partial<Holding>) => {
+      /* Si el producto cambia de cuenta de inversión, se lleva su historia: los
+         movimientos de compra/venta apuntan a la cuenta nueva y el efectivo que
+         pagaron vuelve a la anterior. Así el patrimonio de las dos cuentas no
+         cambia de suma, sólo de reparto. */
+      const from = holdings.find((h) => h.id === id);
+      const to = patch.accountId;
+      if (from && typeof to === "number" && to !== from.accountId) {
+        const delta = from.operations.reduce((sum, op) => sum + operationCashDelta(op), 0);
+        if (delta) {
+          settlePurchase(from.accountId, -delta);
+          settlePurchase(to, delta);
+        }
+        setTransactions((list) => list.map((t) => (t.productId === id ? { ...t, accountId: to } : t)));
+      }
       setHoldings((list) => list.map((h) => (h.id === id ? { ...h, ...patch } : h)));
       flash("Producto actualizado");
     },
-    [flash],
+    [holdings, settlePurchase, flash],
   );
 
   const deleteTransaction = useCallback(
@@ -760,14 +863,18 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       /* Un traspaso son dos apuntes (salida y entrada): se borran siempre los
          dos, aunque la baja se pida desde una sola de las cuentas. */
       if (tx.categoryId === 0) {
+        const sib = findSibling(transactions, tx);
         const next = removeTransaction(tx, transactions, accounts);
         setTransactions(next.transactions);
-        setAccounts(next.accounts);
+        /* El traspaso mueve efectivo: se revierte en la caja de las cuentas de
+           inversión y en el saldo de las corrientes, en las dos patas. */
+        settlePurchase(tx.accountId, tx.amount);
+        if (sib) settlePurchase(sib.accountId, sib.amount);
         flash(next.removed > 1 ? "Traspaso eliminado en las dos cuentas" : "Traspaso eliminado");
         return;
       }
 
-      setAccounts((list) => list.map((a) => (a.id === tx.accountId ? { ...a, balance: a.balance - tx.amount } : a)));
+      settlePurchase(tx.accountId, -tx.amount);
       flash("Movimiento eliminado");
     },
     [transactions, accounts, settlePurchase, flash],
@@ -804,9 +911,10 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   }, [flash]);
 
   const resetData = useCallback(() => {
-    setAccounts(ACCOUNTS);
+    const trimmed = migrateInvestmentCash(ACCOUNTS, HOLDINGS);
+    setAccounts(trimmed.accounts);
     setCategories(CATEGORIES);
-    setHoldings(HOLDINGS);
+    setHoldings(trimmed.holdings);
     setTransactions(TRANSACTIONS);
     setSources(DEFAULT_SOURCES);
     setRoute({ page: "ajustes" });
@@ -825,17 +933,18 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       try {
         const d = JSON.parse(json) as Record<string, unknown>;
         if (!Array.isArray(d.accounts) || !Array.isArray(d.categories) || !Array.isArray(d.holdings) || !Array.isArray(d.transactions)) throw new Error("formato");
-        setAccounts(d.accounts as Account[]);
+        const importedHoldings: Holding[] = (d.holdings as Holding[]).map((h) => ({
+          ...h,
+          contrib: Array.isArray(h.contrib) && h.contrib.length === 24 ? h.contrib : Array(24).fill(0),
+          sectors: Array.isArray(h.sectors) && h.sectors.length ? h.sectors : [["Sin clasificar", 100]],
+          top: Array.isArray(h.top) && h.top.length ? h.top : [["Sin desglose", 100]],
+          countries: Array.isArray(h.countries) && h.countries.length ? h.countries : [["Sin clasificar", 100]],
+        }));
+        /* Copias antiguas: se separa el efectivo de las cuentas de inversión. */
+        const trimmed = migrateInvestmentCash(d.accounts as Account[], importedHoldings);
+        setAccounts(trimmed.accounts);
         setCategories(d.categories as Category[]);
-        setHoldings(
-          (d.holdings as Holding[]).map((h) => ({
-            ...h,
-            contrib: Array.isArray(h.contrib) && h.contrib.length === 24 ? h.contrib : Array(24).fill(0),
-            sectors: Array.isArray(h.sectors) && h.sectors.length ? h.sectors : [["Sin clasificar", 100]],
-            top: Array.isArray(h.top) && h.top.length ? h.top : [["Sin desglose", 100]],
-            countries: Array.isArray(h.countries) && h.countries.length ? h.countries : [["Sin clasificar", 100]],
-          })),
-        );
+        setHoldings(trimmed.holdings);
         setTransactions(sortTx(d.transactions as Tx[]));
         flash("Datos importados correctamente");
         return true;

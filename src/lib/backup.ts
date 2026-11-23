@@ -21,6 +21,7 @@
 import { zipSync, strToU8 } from "fflate";
 import { holdingValue, type Account, type Category, type Holding, type Tx } from "./mock";
 import { isTransfer, runningBalances, transferEndpoints } from "./ledger";
+import { cashOf, valueOf } from "./cash";
 import { todayIso } from "./market";
 import { buildCsvFiles, toCsv } from "./csv-export";
 
@@ -70,12 +71,7 @@ export function backupTotals(data: BackupPayload): BackupTotals {
   const { accounts, holdings, transactions } = data;
   const liquid = accounts.filter((a) => a.kind === "corriente").reduce((s, a) => s + a.balance, 0);
   const invested = holdings.reduce((s, h) => s + holdingValue(h), 0);
-  const investCash = accounts
-    .filter((a) => a.kind === "inversion")
-    .reduce(
-      (s, a) => s + Math.max(a.balance - holdings.filter((h) => h.accountId === a.id).reduce((x, h) => x + holdingValue(h), 0), 0),
-      0,
-    );
+  const investCash = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + cashOf(a, holdings), 0);
   const investedCost = holdings.reduce((s, h) => s + h.invested, 0);
   const income = transactions.filter((t) => !isTransfer(t) && t.amount > 0).reduce((s, t) => s + t.amount, 0);
   const expense = transactions.filter((t) => !isTransfer(t) && t.amount < 0).reduce((s, t) => s - t.amount, 0);
@@ -188,7 +184,7 @@ export function buildReadableHtml(data: BackupPayload, dateStamp = todayIso()): 
     return [
       a.name,
       a.kind === "inversion" ? "Inversión" : "Corriente",
-      eur(a.balance),
+      eur(valueOf(a, holdings)),
       a.archived ? "Sí" : "No",
       String(products.length),
       products.length ? eur(invested) : "—",

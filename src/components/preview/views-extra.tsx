@@ -237,7 +237,7 @@ export function ChartsView() {
     () => holdings.map((h) => ({ h, w: windowSeries(productSeries(h), period) })).map((x) => ({ ...x, pc: changePct(x.w) })).sort((a, b) => b.pc - a.pc),
     [holdings, period],
   );
-  const accWin = useMemo(() => accounts.map((a) => ({ a, w: windowSeries(accountSeries(a), period) })), [accounts, period]);
+  const accWin = useMemo(() => accounts.map((a) => ({ a, w: windowSeries(accountSeries(a, holdings), period) })), [accounts, holdings, period]);
 
   /** Gasto acumulado dentro del periodo, tramo a tramo */
   const cumulative = flows.reduce<number[]>((acc, f) => [...acc, (acc[acc.length - 1] ?? 0) + f.b], []);
@@ -274,9 +274,18 @@ export function ChartsView() {
   }, [sp.rows]);
 
   /** Reparto del patrimonio por cuenta */
+  /* Reparto del patrimonio: en las cuentas de inversión valor = caja + productos. */
   const wealthSplit = useMemo(
-    () => accounts.map((a) => ({ id: a.id, name: a.name, value: Math.max(a.balance, 0.01), colorIdx: a.colorIdx })).sort((a, b) => b.value - a.value),
-    [accounts],
+    () =>
+      accounts
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          value: Math.max(a.balance + (a.kind === "inversion" ? holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + holdingValue(h), 0) : 0), 0.01),
+          colorIdx: a.colorIdx,
+        }))
+        .sort((a, b) => b.value - a.value),
+    [accounts, holdings],
   );
 
   const heat = useMemo(() => {

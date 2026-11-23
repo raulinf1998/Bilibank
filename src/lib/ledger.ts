@@ -58,6 +58,8 @@ export function transferLabel(tx: Tx, transactions: Tx[], accounts: Account[]): 
 /**
  * Saldo de cada cuenta después de cada movimiento: `Map<txId, saldo>`.
  * Se parte del saldo actual y se recorre del más reciente al más antiguo.
+ * En las cuentas de inversión el saldo es su efectivo (`cash`), no el valor de
+ * la cartera: los movimientos mueven caja, los precios no.
  */
 export function runningBalances(accounts: Account[], transactions: Tx[]): Map<number, number> {
   const out = new Map<number, number>();
@@ -65,7 +67,7 @@ export function runningBalances(accounts: Account[], transactions: Tx[]): Map<nu
 
   for (const account of accounts) {
     const own = transactions.filter((t) => t.accountId === account.id).sort(order);
-    let balance = account.balance;
+    let balance = account.kind === "inversion" ? (account.cash ?? account.balance) : account.balance;
     for (let i = own.length - 1; i >= 0; i--) {
       const tx = own[i];
       out.set(tx.id, Math.round(balance * 100) / 100);

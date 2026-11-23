@@ -77,7 +77,10 @@ const num = (v: string | undefined): number => {
   const n = Number(v.replace(/\s/g, "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 };
-const round2 = (n: number) => Math.round(n * 100) / 100;
+const round2 = (n: number) => {
+  const r = Math.round(n * 100) / 100;
+  return r === 0 ? 0 : r;
+};
 const monthOf = (iso: string) => iso.slice(0, 7);
 
 /** Busca un fichero del export por nombre, ignorando carpetas y mayúsculas. */
@@ -311,7 +314,10 @@ export function buildSnapshot(files: Record<string, string>, options: BuildOptio
       id: nextAccountId++,
       name: displayName,
       kind: "inversion",
+      /* `cash` es el dinero sin invertir que reporta la cartera; `balance` se
+         mantiene por compatibilidad con el saldo que traía el export. */
       balance: round2(cash),
+      cash: round2(cash),
       initialBalance: round2(cash),
       colorIdx: (accounts.length * 3) % 12,
       history: bucket ? monthlyHistory(bucket.dates, bucket.values, cash) : Array(12).fill(round2(cash)),
@@ -335,6 +341,9 @@ export function buildSnapshot(files: Record<string, string>, options: BuildOptio
         units: num(row.Quantity),
         price: num(row.Price),
         fees: num(row.Fees),
+        /* El efectivo que trae la cartera ya viene descontadas estas compras:
+           son historial y no deben volver a cobrarse en la cuenta. */
+        settled: true,
       };
       operationsBySecurity.set(key, [...(operationsBySecurity.get(key) ?? []), op]);
     }
@@ -429,15 +438,13 @@ export function buildSnapshot(files: Record<string, string>, options: BuildOptio
     account.history = monthly.slice(-12);
   }
 
-  /* Saldo de las cuentas de inversión = valor de sus productos + efectivo */
+  /* Las carteras llegan con su efectivo ya conciliado: el export descuenta las
+     compras de la caja, así que `cash` se copia tal cual y su valor total se
+     compone al mostrarlo (efectivo + productos). El saldo inicial es el dinero
+     aportado (coste de los productos más la caja disponible). */
   for (const account of accounts.filter((a) => a.kind === "inversion")) {
-    const value = holdings.filter((h) => h.accountId === account.id).reduce((s, h) => s + h.units * h.price, 0);
-    if (value > 0) {
-      account.balance = round2(value + account.balance);
-      account.initialBalance = round2(
-        holdings.filter((h) => h.accountId === account.id).reduce((s, h) => s + h.invested, 0) + account.initialBalance,
-      );
-    }
+    const invested = holdings.filter((h) => h.accountId === account.id).reduce((s, h) => s + h.invested, 0);
+    account.initialBalance = round2(invested + (account.cash ?? 0));
   }
 
   /* ---------------- categorías ---------------- */

@@ -19,6 +19,12 @@ export interface Account {
   colorIdx: ColorRef;
   history: number[];
   archived?: boolean;
+  /**
+   * Sólo cuentas de inversión: dinero disponible sin invertir.
+   * El valor de la cuenta es `cash + valor de sus productos`.
+   * En las cuentas corrientes el efectivo es `balance`.
+   */
+  cash?: number;
 }
 
 export interface Subcategory {
@@ -69,6 +75,12 @@ export interface Operation {
   units: number;
   price: number;
   fees: number;
+  /**
+   * La operación ya está pagada con el efectivo que traía la cuenta importada
+   * (el export descuenta las compras de la caja de la cartera). No genera
+   * movimiento nuevo ni se ofrece para «anotar».
+   */
+  settled?: boolean;
 }
 
 export type HoldingCategory = "Cripto" | "Materias primas" | "Fondo monetario" | "Fondo indexado" | "Acciones";
