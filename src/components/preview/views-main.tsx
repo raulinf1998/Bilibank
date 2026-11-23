@@ -3,9 +3,9 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeftRight, Briefcase, Building2, ChevronLeft, ChevronRight, Coins, Download, Landmark, Pencil, PiggyBank,
-  Plus, RefreshCw, Search, ShoppingCart, Trash2, TrendingUp, Wallet,
+  Plus, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, TrendingUp, Wallet,
 } from "lucide-react";
-import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, subColor, subIconKey, type Account, type Category, type Holding, type Tx, periodOptions } from "@/lib/mock";
+import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, subColor, subIconKey, type Account, type Category, type Holding, type Operation, type Tx, periodOptions } from "@/lib/mock";
 import { CAT_ICON, iconNode } from "@/lib/icons";
 import { countryDistribution, countryTop5, holdingPath, monthlyContributions, sectorDistribution, type ContribResult, type MapEntry } from "@/lib/investing";
 import { WorldMap } from "./worldmap";
@@ -27,6 +27,15 @@ export { CAT_ICON };
 
 export function catIcon(c?: Category) {
   return c ? iconNode(c.icon) : <ArrowLeftRight className="h-4 w-4" />;
+}
+
+const OP_LABEL: Record<string, string> = { compra: "Compra", venta: "Venta", dividendo: "Dividendo", aportacion: "Aportación" };
+
+/** Importe de una operación tal y como se ve en las tablas (siempre en positivo). */
+function operationAmount(op: Operation): number {
+  if (op.type === "dividendo") return op.price;
+  if (op.type === "venta") return op.units * op.price - op.fees;
+  return op.units * op.price + op.fees;
 }
 
 export function accountSeries(a: Account): number[] {
@@ -888,7 +897,7 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
   const all = transactions.filter((t) => t.accountId === acc.id);
   const txs = all.filter((t) => inPeriod(t.date, period));
   const win = windowSeries(full, period);
-  const prods = holdings.filter((h) => h.accountId === acc.id);
+  const prods = useMemo(() => holdings.filter((h) => h.accountId === acc.id), [holdings, acc.id]);
   const cs = arch.chartStyle;
 
   const productsValue = prods.reduce((s, h) => s + holdingValue(h), 0);
@@ -901,17 +910,32 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
   const funding = txs.filter((t) => t.categoryId === 0);
   const fundingNet = funding.reduce((s, t) => s + t.amount, 0);
 
+  /* Todas las operaciones de los productos de esta cuenta, de la más reciente a
+     la más antigua (la tabla enseña las últimas y el subtítulo dice cuántas caen
+     dentro del periodo elegido). */
+  const opsAll = useMemo(
+    () =>
+      prods
+        .flatMap((holding) => holding.operations.map((op) => ({ holding, op, amount: operationAmount(op) })))
+        .sort((a, b) => (a.op.date === b.op.date ? b.op.id - a.op.id : a.op.date < b.op.date ? 1 : -1)),
+    [prods],
+  );
+  const opsInPeriod = useMemo(() => opsAll.filter((r) => inPeriod(r.op.date, period)), [opsAll, period]);
+  const opsShown = opsAll.slice(0, isMobile ? 8 : 12);
+  const opsMissingExpenses = useMemo(() => {
+    const linked = new Set(transactions.filter((t) => t.productId !== undefined).map((t) => `${t.productId}:${t.operationId}`));
+    return prods.reduce(
+      (sum, holding) =>
+        sum + holding.operations.filter((op) => (op.type === "compra" || op.type === "aportacion") && op.units > 0 && !linked.has(`${holding.id}:${op.id}`)).length,
+      0,
+    );
+  }, [prods, transactions]);
+
   const kpis = [
     { label: "Valor total", value: formatEUR(total), delta: formatPct(changePct(win)), trend: trend(changePct(win)), icon: <Briefcase className="h-4 w-4" />, colorIdx: acc.colorIdx, footnote: `productos + efectivo · ${periodShort(period)}`, pct: 100 },
     { label: "En productos", value: formatEUR(productsValue), footnote: `${prods.length} productos · ${investedPct.toFixed(0)} % invertido`, icon: <TrendingUp className="h-4 w-4" />, colorIdx: 1, pct: investedPct },
     { label: "Efectivo sin invertir", value: formatEUR(cash), footnote: "disponible para comprar", icon: <Wallet className="h-4 w-4" />, colorIdx: 4, pct: 100 - investedPct },
     { label: "Ganancia latente", value: formatSigned(gain), delta: formatPct(gainPct), trend: trend(gain), icon: <PiggyBank className="h-4 w-4" />, colorIdx: 3, footnote: `invertido ${formatEUR0(investedCost)}`, pct: Math.min(100, Math.abs(gainPct) * 4) },
-  ];
-
-  const steps = [
-    { n: "1", t: "Traspasa desde una cuenta corriente", d: "El dinero entra como efectivo disponible en esta cuenta." },
-    { n: "2", t: "Compra productos de inversión", d: "Añade ETFs, fondos, acciones o cripto con ese efectivo." },
-    { n: "3", t: "Sigue la rentabilidad aquí", d: "Valor total, ganancia latente y evolución por producto." },
   ];
 
   const actions = (
@@ -954,24 +978,14 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
         )}
       </Panel>
       <PanelGrid cols="grid-cols-1 xl:grid-cols-3">
-        <Panel>
-          <SectionTitle sub="Estas cuentas no tienen gastos: solo reciben traspasos y compran productos">Cómo se fondea esta cuenta</SectionTitle>
-          <div className="flex flex-col gap-3">
-            {steps.map((s) => (
-              <div key={s.n} className="flex items-start gap-3">
-                <span className="pv-num grid h-6 w-6 shrink-0 place-items-center text-[11px] font-bold" style={{ background: "var(--accent-soft)", color: "var(--accent)", borderRadius: "var(--radius-pill)" }}>{s.n}</span>
-                <div className="min-w-0">
-                  <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>{s.t}</p>
-                  <p className="pv-faint text-[11.5px]">{s.d}</p>
-                </div>
-              </div>
-            ))}
-            <Btn icon={<ArrowLeftRight className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "transfer" })}>Traspasar desde una corriente</Btn>
-          </div>
-        </Panel>
-        <Panel pad={false} span="xl:col-span-2">
+        <Panel pad={false}>
           <div style={{ padding: "var(--pad)" }}>
-            <SectionTitle sub={funding.length > 0 ? `${funding.length} traspasos · neto ${formatSigned(fundingNet)} · ${periodLabel(period).toLowerCase()}` : "El dinero entra aquí solo mediante traspasos"}>Aportaciones y retiradas</SectionTitle>
+            <SectionTitle
+              sub={funding.length > 0 ? `${funding.length} traspasos · neto ${formatSigned(fundingNet)} · ${periodLabel(period).toLowerCase()}` : "El dinero entra aquí solo mediante traspasos"}
+              action={<Btn variant="ghost" size="sm" icon={<ArrowLeftRight className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "transfer" })}>Traspasar</Btn>}
+            >
+              Aportaciones y retiradas
+            </SectionTitle>
           </div>
           {funding.length > 0 ? (
             <TxList txs={funding} limit={isMobile ? 6 : 10} filterable={false} />
@@ -979,6 +993,94 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
             <div className="flex flex-col items-center gap-2 px-4 pb-6 text-center">
               <p className="pv-faint text-[12px]">Aún no hay traspasos en este periodo. El primer paso para invertir es mover dinero desde una cuenta corriente.</p>
               <Btn size="sm" icon={<ArrowLeftRight className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "transfer" })}>Crear el primer traspaso</Btn>
+            </div>
+          )}
+        </Panel>
+        <Panel pad={false} span="xl:col-span-2">
+          <div style={{ padding: "var(--pad)", paddingBottom: 8 }}>
+            <SectionTitle
+              sub={
+                opsAll.length > 0
+                  ? `${opsAll.length} ${opsAll.length === 1 ? "operación" : "operaciones"} en total · ${opsInPeriod.length} en ${periodLabel(period).toLowerCase()}`
+                  : "Todavía no hay compras ni ventas de estos productos"
+              }
+              action={
+                <Btn variant="ghost" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: prods[0]?.id })}>
+                  Nueva operación
+                </Btn>
+              }
+            >
+              Operaciones de los productos
+            </SectionTitle>
+          </div>
+          {opsMissingExpenses > 0 && (
+            <p className="mx-4 mb-2 flex items-start gap-2 text-[11.5px] leading-snug" style={{ color: "var(--accent)" }}>
+              <ReceiptText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Hay {opsMissingExpenses} {opsMissingExpenses === 1 ? "compra" : "compras"} sin gasto anotado en la cuenta.
+                Abre cada producto y pulsa «Anotar gastos» para registrarlas.
+              </span>
+            </p>
+          )}
+          {opsShown.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left" style={{ minWidth: isMobile ? 660 : 0 }}>
+                <thead>
+                  <tr style={{ background: "var(--surface-2)" }}>
+                    <th className="pv-muted px-2 py-2 pl-4 text-[10px] font-bold uppercase tracking-[0.1em] whitespace-nowrap">Fecha</th>
+                    <th className="pv-muted px-2 py-2 text-[10px] font-bold uppercase tracking-[0.1em]">Producto</th>
+                    <th className="pv-muted px-2 py-2 text-[10px] font-bold uppercase tracking-[0.1em]">Tipo</th>
+                    <th className="pv-muted px-2 py-2 text-right text-[10px] font-bold uppercase tracking-[0.1em] whitespace-nowrap">Particip.</th>
+                    <th className="pv-muted px-2 py-2 text-right text-[10px] font-bold uppercase tracking-[0.1em] whitespace-nowrap">Precio / part.</th>
+                    <th className="pv-muted px-2 py-2 pr-4 text-right text-[10px] font-bold uppercase tracking-[0.1em]">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {opsShown.map((r) => (
+                    <tr key={`${r.holding.id}-${r.op.id}`} className="pv-table-row" style={{ borderTop: "1px solid var(--border)" }}>
+                      <td className="px-2 py-2 pl-4 text-[12px] whitespace-nowrap" style={{ color: "var(--text)" }}>{formatFullDate(r.op.date)}</td>
+                      <td className="px-2 py-2">
+                        <button
+                          type="button"
+                          className="text-left text-[12px] font-semibold underline-offset-2 hover:underline"
+                          style={{ color: "var(--text)" }}
+                          onClick={() => go({ page: "inversiones", productId: r.holding.id })}
+                        >
+                          {r.holding.nickname}
+                        </button>
+                        <span className="pv-faint block text-[10.5px]">{r.holding.ticker}</span>
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap">
+                        <span
+                          className="pv-pill px-2 py-0.5 text-[10.5px] font-semibold"
+                          style={{
+                            color: r.op.type === "venta" ? "var(--neg)" : r.op.type === "dividendo" ? "var(--pos)" : "var(--accent)",
+                            background: r.op.type === "venta" ? "var(--neg-soft)" : r.op.type === "dividendo" ? "var(--pos-soft)" : "var(--accent-soft)",
+                          }}
+                        >
+                          {OP_LABEL[r.op.type] ?? r.op.type}
+                        </span>
+                      </td>
+                      <td className="pv-num px-2 py-2 text-right text-[12px]" style={{ color: "var(--text)" }}>{r.op.units ? formatNum(r.op.units) : "—"}</td>
+                      <td className="pv-num px-2 py-2 text-right text-[12px]" style={{ color: "var(--text)" }}>{formatNum(r.op.price)} €</td>
+                      <td className="pv-num px-2 py-2 pr-4 text-right text-[12px] font-semibold" style={{ color: "var(--text)" }}>{formatEUR(r.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2 px-4 pb-6 text-center">
+              <p className="pv-faint text-[12px]">
+                {prods.length > 0
+                  ? "Ninguna compra ni venta de tus productos en este periodo."
+                  : "Esta cuenta aún no tiene productos. Añade el primero para empezar a invertir."}
+              </p>
+              {prods.length > 0 ? (
+                <Btn size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: prods[0].id })}>Registrar operación</Btn>
+              ) : (
+                <Btn size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "product", accountId: acc.id })}>Añadir producto</Btn>
+              )}
             </div>
           )}
         </Panel>
@@ -1699,8 +1801,6 @@ function PortfolioList() {
 
 /* ------------------------------ Operaciones de un producto ------------------------------ */
 
-const OP_LABEL: Record<string, string> = { compra: "Compra", venta: "Venta", dividendo: "Dividendo", aportacion: "Aportación" };
-
 /**
  * Tabla de operaciones con el detalle de cada una: participaciones, precio por
  * participación, total invertido, comisiones y la ganancia de esa operación
@@ -1847,10 +1947,16 @@ function OperationsTable({ holding, onEdit, onNew }: { holding: Holding; onEdit:
 
 function ProductDetail({ id }: { id: number }) {
   const { arch, isMobile } = useArch();
-  const { holdings, accounts, back, openModal, period, setPeriod, go, deleteHolding } = usePreview();
+  const { holdings, accounts, transactions, back, openModal, period, setPeriod, go, deleteHolding, syncProductExpenses } = usePreview();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const h = holdings.find((x) => x.id === id);
   const full = useMemo(() => (h ? productSeries(h) : []), [h]);
+  /* Compras del producto que aún no tienen su gasto anotado en la cuenta. */
+  const missingExpenses = useMemo(() => {
+    if (!h) return [];
+    const linked = new Set(transactions.filter((t) => t.productId === h.id).map((t) => t.operationId));
+    return h.operations.filter((op) => (op.type === "compra" || op.type === "aportacion") && op.units > 0 && !linked.has(op.id));
+  }, [h, transactions]);
   if (!h) return null;
   const acc = accounts.find((a) => a.id === h.accountId);
   const v = holdingValue(h);
@@ -1894,6 +2000,14 @@ function ProductDetail({ id }: { id: number }) {
               Eliminar
             </Btn>
           )}
+          <Btn
+            variant="ghost"
+            icon={<ReceiptText className="h-3.5 w-3.5" />}
+            aria={missingExpenses.length > 0 ? `Anotar como gasto las ${missingExpenses.length} compras que faltan` : "Los gastos de este producto están al día"}
+            onClick={() => syncProductExpenses(h.id)}
+          >
+            {missingExpenses.length > 0 ? `Anotar ${missingExpenses.length} ${missingExpenses.length === 1 ? "gasto" : "gastos"}` : "Gastos al día"}
+          </Btn>
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: h.id })}>Nueva operación</Btn>
         </>
       } />

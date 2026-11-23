@@ -125,6 +125,13 @@ interface PreviewState {
    * esas compras.
    */
   deleteHolding: (id: number) => boolean;
+  /**
+   * Rellena los gastos que faltan de un producto: crea el movimiento de compra
+   * en la cuenta vinculada para cada operación que aún no lo tiene (típico tras
+   * importar los datos de otra app, que trae las operaciones pero no los gastos).
+   * Devuelve cuántos movimientos ha creado.
+   */
+  syncProductExpenses: (productId: number) => number;
   deleteTransaction: (id: number) => void;
   /** Borra la cuenta y sus movimientos; los productos deben moverse antes. */
   deleteAccount: (id: number) => boolean;
@@ -497,6 +504,56 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
     [holdings, transactions, accounts, settlePurchase, flash],
   );
 
+  /**
+   * Crea los movimientos de compra que faltan de un producto.
+   *
+   * Cada compra (o aportación) del producto debería tener su gasto en la cuenta
+   * vinculada; al importar de otra app llegan las operaciones pero no los
+   * gastos. Este botón rellena solo las que faltan, sin duplicar nada, y ajusta
+   * el saldo con la misma regla que el alta normal de una compra.
+   */
+  const syncProductExpenses = useCallback(
+    (productId: number) => {
+      const product = holdings.find((h) => h.id === productId);
+      if (!product) return 0;
+      const linked = transactions.filter((t) => t.productId === productId);
+      const done = new Set(linked.map((t) => t.operationId));
+      const missing = product.operations.filter(
+        (op) => (op.type === "compra" || op.type === "aportacion") && !done.has(op.id) && op.units > 0 && op.date,
+      );
+      if (!missing.length) {
+        flash("Todas las compras de este producto ya están anotadas como gasto");
+        return 0;
+      }
+      const { categoryId, subcategoryId } = investmentCategory();
+      let total = 0;
+      const rows: Tx[] = missing.map((op) => {
+        const amount = Math.round((op.units * op.price + op.fees) * 100) / 100;
+        total += amount;
+        return {
+          id: 0,
+          date: op.date,
+          concept: `Compra ${product.nickname || product.ticker}`,
+          categoryId,
+          subcategoryId,
+          accountId: product.accountId,
+          amount: -Math.abs(amount),
+          note: `${op.units} × ${op.price} €${op.fees ? ` + ${op.fees} € de comisiones` : ""}`,
+          productId,
+          operationId: op.id,
+        };
+      });
+      setTransactions((list) => {
+        let id = Math.max(0, ...list.map((t) => t.id));
+        return sortTx([...rows.map((row) => ({ ...row, id: ++id })), ...list]);
+      });
+      settlePurchase(product.accountId, total);
+      flash(`${missing.length} ${missing.length === 1 ? "gasto anotado" : "gastos anotados"} en la cuenta del producto`);
+      return missing.length;
+    },
+    [holdings, transactions, investmentCategory, settlePurchase, flash],
+  );
+
   const addCategory = useCallback(
     (c: Omit<Category, "id" | "subcategories">, subs: string[]) => {
       setCategories((list) => {
@@ -839,10 +896,10 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       route, go, back, modal, openModal, closeModal, closeAllModals, period, setPeriod, toast, flash, saveState, lastSavedAt,
       accounts, categories, holdings, transactions, sources, toggleSource,
       addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory,
-      updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding,
+      updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, syncProductExpenses,
       deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices,
     }),
-    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
+    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, syncProductExpenses, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
