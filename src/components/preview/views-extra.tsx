@@ -5,7 +5,7 @@ import { ChevronRight, Database, Download, FileArchive, Globe, KeyRound, ListTre
 import { strFromU8, unzipSync } from "fflate";
 import { buildSnapshot, type ImportSummary } from "@/lib/moneymatter";
 import { findBackupInZip } from "@/lib/backup";
-import { PERIODS, holdingValue, subColor } from "@/lib/mock";
+import { PERIODS, holdingValue, subColor, periodOptions } from "@/lib/mock";
 import { DATA_COLORS, DATA_COLOR_NAMES, chartColor } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
 import { TODAY, addDays, setTodayReference, bucketLabels, bucketize, changePct, flowsFor, inPeriod, periodLabel, periodMonths, periodRange, periodShort, sampleAtBuckets, windowSeries } from "@/lib/series";
@@ -51,7 +51,7 @@ function CategoriesList() {
     <Stack>
       <PageHeader kicker={`${categories.length} categorías · ${subCount} subcategorías`} title="Categorías" action={
         <>
-          <Segmented options={PERIODS} value={period} onChange={setPeriod} />
+          <Segmented options={periodOptions(period)} value={period} onChange={setPeriod} />
           <Btn variant="ghost" icon={<ListTree className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "organizeCategories" })}>Organizar</Btn>
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "category" })}>Nueva categoría</Btn>
         </>
@@ -153,7 +153,7 @@ function CategoryDetail({ id }: { id: number }) {
       <KpiGroup items={kpis} />
       <PanelGrid cols="grid-cols-1 xl:grid-cols-3">
         <Panel span="xl:col-span-2">
-          <SectionTitle sub={`${periodLabel(period)} · pulsa una subcategoría para ver sus movimientos`} action={<Segmented options={PERIODS} value={period} onChange={setPeriod} />}>Subcategorías</SectionTitle>
+          <SectionTitle sub={`${periodLabel(period)} · pulsa una subcategoría para ver sus movimientos`} action={<Segmented options={periodOptions(period)} value={period} onChange={setPeriod} />}>Subcategorías</SectionTitle>
           <HBars style={cs} items={subs.map((s) => ({ name: s.name, value: s.spent, colorIdx: subColor(c, s), sub: `${s.count} mov.`, onClick: () => openModal({ kind: "categoryTx", categoryId: c.id, subcategoryId: s.id }) }))} valueLabel={formatEUR} />
         </Panel>
         <Panel>

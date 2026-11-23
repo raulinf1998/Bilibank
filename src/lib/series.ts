@@ -106,6 +106,35 @@ export function periodRange(p: string): { from: string; to: string } {
   return { from: addDays(TODAY, -(days - 1)), to: TODAY };
 }
 
+/**
+ * Periodo por defecto de toda la app: el MES ACTUAL, que es lo que se quiere ver
+ * al entrar en el panel o en una cuenta.
+ *
+ * Solo si ese mes queda fuera de la ventana de datos (por ejemplo, una copia
+ * antigua importada hace meses) se usa el último mes disponible.
+ */
+export function defaultPeriod(): string {
+  const inWindow = (ym: string) => ym >= DATA_FROM.slice(0, 7) && ym <= DATA_TO.slice(0, 7);
+  const current = TODAY.slice(0, 7);
+  return monthPeriod(inWindow(current) ? current : DATA_TO.slice(0, 7));
+}
+
+/**
+ * Etiqueta corta de un periodo para los selectores rápidos. Cuando el periodo
+ * activo es un mes concreto o un rango a medida se muestra como una opción más
+ * delante de 1M · 3M · 6M · 1A · Max, para que el selector nunca aparezca vacío.
+ */
+export function periodChip(p: string): { id: string; label: string } | null {
+  if (isMonthPeriod(p)) return { id: p, label: monthShortLabel(monthOf(p)) };
+  if (isRangePeriod(p)) return { id: p, label: "Rango" };
+  return null;
+}
+
+export function periodChipExtra(p: string): { id: string; label: string }[] {
+  const chip = periodChip(p);
+  return chip ? [chip] : [];
+}
+
 export const periodDays = (p: string) => {
   const { from, to } = periodRange(p);
   return daysBetween(from, to) + 1;

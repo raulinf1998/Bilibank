@@ -5,7 +5,7 @@ import {
   ArrowDown, ArrowDownRight, ArrowLeftRight, ArrowUp, ArrowUpRight, Bell, Briefcase, Check, ChevronRight, Database, Download, FileArchive, FileText, Landmark, LoaderCircle, Pencil, Plus, Search, ShieldCheck, StickyNote, TableProperties, Tag, Trash2, TriangleAlert, X,
 } from "lucide-react";
 import type { Account, AccountKind, Category, Holding, Operation, Tx } from "@/lib/mock";
-import { HOLDING_CATEGORIES, type HoldingCategory } from "@/lib/mock";
+import { HOLDING_CATEGORIES, type HoldingCategory, periodOptions } from "@/lib/mock";
 import { subColor, subIconKey } from "@/lib/mock";
 import { chartColor, onColor, type ColorRef } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
@@ -394,7 +394,7 @@ function CategoryTxModal({ categoryId, subcategoryId, onClose }: { categoryId: n
       }
     >
       <div className="flex flex-col gap-4">
-        <Segmented options={PERIODS} value={period} onChange={setPeriod} />
+        <Segmented options={periodOptions(period)} value={period} onChange={setPeriod} />
 
         <div className="flex items-center gap-4" style={{ padding: 14, borderRadius: "var(--radius)", background: `color-mix(in srgb, ${headColor} 12%, var(--surface))`, border: `1px solid color-mix(in srgb, ${headColor} 35%, transparent)` }}>
           <IconBadge icon={activeSub ? iconNode(activeSub.icon) : catIcon(cat)} colorIdx={activeSub ? subColor(cat, activeSub) : cat.colorIdx} size={44} />
@@ -1431,8 +1431,9 @@ function BreakdownEditor({
 }
 
 function EditProductModal({ productId, onClose }: { productId: number; onClose: () => void }) {
-  const { holdings, accounts, updateHolding } = usePreview();
+  const { holdings, accounts, updateHolding, deleteHolding } = usePreview();
   const h = holdings.find((x) => x.id === productId);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [accountId, setAccountId] = useState(h?.accountId ?? 0);
   const [name, setName] = useState(h?.name ?? "");
   const [nickname, setNickname] = useState(h?.nickname ?? "");
@@ -1554,6 +1555,38 @@ function EditProductModal({ productId, onClose }: { productId: number; onClose: 
         {feed.message && (
           <p className="text-[11px] leading-snug" style={{ color: feed.status === "error" ? "var(--neg)" : "var(--pos)" }}>{feed.message}</p>
         )}
+
+        <div className="pv-divider" />
+
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>Eliminar producto</p>
+            <p className="pv-faint text-[11px] leading-snug">
+              Se borra la ficha junto con sus {h.operations.length} operaciones y los movimientos de compra anotados en Inversiones.
+              {h.units > 1e-9 ? ` Ahora mismo tienes ${formatNum(h.units)} participaciones por valor de ${formatEUR(h.units * h.price)}.` : ""}
+              {confirmDelete ? " Esta acción no se puede deshacer." : ""}
+            </p>
+          </div>
+          {confirmDelete ? (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Btn variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>No</Btn>
+              <Btn
+                variant="danger"
+                size="sm"
+                icon={<Trash2 className="h-3 w-3" />}
+                onClick={() => { if (deleteHolding(h.id)) onClose(); }}
+              >
+                Sí, eliminar
+              </Btn>
+            </div>
+          ) : (
+            <Btn variant="danger" size="sm" icon={<Trash2 className="h-3 w-3" />} onClick={() => setConfirmDelete(true)}>
+              Eliminar
+            </Btn>
+          )}
+        </div>
+
+        <div className="pv-divider" />
 
         <BreakdownEditor
           label="Sectores"

@@ -15,7 +15,7 @@ import {
   type Subcategory,
   type Tx,
 } from "@/lib/mock";
-import { setTodayReference } from "@/lib/series";
+import { defaultPeriod, setTodayReference } from "@/lib/series";
 import { removeTransaction } from "@/lib/ledger";
 import { shortDate, stablePrice, todayIso, withPrice } from "@/lib/market";
 import { demoteCategory as demoteInTree, moveItem, moveSubcategory as moveSubInTree, promoteSubcategory as promoteInTree, remapTransaction } from "@/lib/category-tree";
@@ -119,6 +119,12 @@ interface PreviewState {
   updateHolding: (id: number, patch: Partial<Holding>) => void;
   updateOperation: (productId: number, opId: number, op: Omit<Operation, "id">) => void;
   deleteOperation: (productId: number, opId: number) => void;
+  /**
+   * Elimina un producto de una cuenta de inversión junto con sus operaciones y
+   * los movimientos de compra que generó. Deja los saldos como estaban antes de
+   * esas compras.
+   */
+  deleteHolding: (id: number) => boolean;
   deleteTransaction: (id: number) => void;
   /** Borra la cuenta y sus movimientos; los productos deben moverse antes. */
   deleteAccount: (id: number) => boolean;
@@ -151,7 +157,8 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   const [route, setRoute] = useState<Route>(initialRoute ?? { page: "panel" });
   const [history, setHistory] = useState<Route[]>([]);
   const [stack, setStack] = useState<ModalKind[]>(initialModal ? [initialModal] : []);
-  const [period, setPeriod] = useState("1A");
+  /* Por defecto, el mes actual (en la ventana del último dato disponible). */
+  const [period, setPeriod] = useState<string>(() => defaultPeriod());
   const [toast, setToast] = useState<string | null>(null);
 
   const [accounts, setAccounts] = useState<Account[]>(initialData?.accounts?.length ? initialData.accounts : ACCOUNTS);
@@ -458,6 +465,36 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       flash("Operación eliminada");
     },
     [flash],
+  );
+
+  /**
+   * Borra un producto de una cuenta de inversión.
+   *
+   * Se lleva por delante sus operaciones y los movimientos de compra que se
+   * anotaron en «Inversiones», y deja el saldo de las cuentas corrientes como
+   * estaba antes de esas compras (el dinero vuelve a estar disponible, igual
+   * que al borrar un movimiento de compra a mano).
+   *
+   * En las cuentas de inversión no se toca `account.balance`: su saldo es el
+   * valor de los productos, que acaba de desaparecer.
+   */
+  const deleteHolding = useCallback(
+    (id: number) => {
+      const product = holdings.find((h) => h.id === id);
+      if (!product) return false;
+      const purchases = transactions.filter((t) => t.productId === id);
+      /* Devolver el dinero de las compras hechas desde cuentas corrientes. */
+      for (const tx of purchases) {
+        const acc = accounts.find((a) => a.id === tx.accountId);
+        if (acc?.kind === "corriente") settlePurchase(tx.accountId, tx.amount);
+      }
+      setHoldings((list) => list.filter((h) => h.id !== id));
+      setTransactions((list) => list.filter((t) => t.productId !== id));
+      setRoute((r) => (r.productId === id ? { page: r.page } : r));
+      flash(`${product.nickname || product.ticker} eliminado · ${purchases.length} movimientos de compra borrados`);
+      return true;
+    },
+    [holdings, transactions, accounts, settlePurchase, flash],
   );
 
   const addCategory = useCallback(
@@ -802,10 +839,10 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       route, go, back, modal, openModal, closeModal, closeAllModals, period, setPeriod, toast, flash, saveState, lastSavedAt,
       accounts, categories, holdings, transactions, sources, toggleSource,
       addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory,
-      updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation,
+      updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding,
       deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices,
     }),
-    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
+    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

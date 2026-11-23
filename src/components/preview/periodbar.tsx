@@ -12,6 +12,7 @@ import {
   monthPeriod,
   monthShortLabel,
   monthTitle,
+  periodChipExtra,
   periodDays,
   periodLabel,
   periodRange,
@@ -67,6 +68,9 @@ export function PeriodBar() {
   const { MIN_YM, MAX_YM, MIN_YEAR, MAX_YEAR, inData } = monthBounds();
   const [viewYear, setViewYear] = useState(MAX_YEAR);
   const { from, to } = periodRange(period);
+  /* Si el periodo es un mes concreto (o un rango), se añade su propia opción
+     delante de 3M/6M/1A/Todo para que el selector no aparezca «vacío». */
+  const chips = [...periodChipExtra(period), ...CHIPS];
   const curYM = isMonthPeriod(period) ? monthOf(period) : to.slice(0, 7);
   const [rFrom, setRFrom] = useState(from);
   const [rTo, setRTo] = useState(to);
@@ -130,7 +134,7 @@ export function PeriodBar() {
           </div>
 
           <div className="flex items-center gap-1 p-1" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 14 }}>
-            {CHIPS.map((c) => {
+            {chips.map((c) => {
               const on = period === c.id;
               return (
                 <button
