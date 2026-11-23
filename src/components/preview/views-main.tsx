@@ -3,16 +3,16 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeftRight, Briefcase, Building2, ChevronLeft, ChevronRight, Coins, Download, Landmark, Pencil, PiggyBank,
-  Plus, RefreshCw, Search, ShoppingCart, TrendingUp, Wallet,
+  Plus, RefreshCw, Search, ShoppingCart, Trash2, TrendingUp, Wallet,
 } from "lucide-react";
-import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, subColor, subIconKey, type Account, type Category, type Holding, type Tx } from "@/lib/mock";
+import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, subColor, subIconKey, type Account, type Category, type Holding, type Tx, periodOptions } from "@/lib/mock";
 import { CAT_ICON, iconNode } from "@/lib/icons";
 import { countryDistribution, countryTop5, holdingPath, monthlyContributions, sectorDistribution, type ContribResult, type MapEntry } from "@/lib/investing";
 import { WorldMap } from "./worldmap";
 import { PeriodBar } from "./periodbar";
 import { TX_LIMITS, type CardStyleKey, type ChartStyleKey, type DesignConfig } from "@/lib/themes";
 import { chartColor, onColor, type ColorRef } from "@/lib/colors";
-import { FULL_DAYS, TODAY, addDays, periodRange, bucketLabels, changePct, expandSeries, flowsFor, inPeriod, periodDays, periodLabel, periodMonths, periodShort, periodStart, sampleAtBuckets, windowSeries } from "@/lib/series";
+import { FULL_DAYS, TODAY, addDays, periodChipExtra, periodRange, bucketLabels, changePct, expandSeries, flowsFor, inPeriod, periodDays, periodLabel, periodMonths, periodShort, periodStart, sampleAtBuckets, windowSeries } from "@/lib/series";
 import { formatEUR, formatEUR0, formatNum, formatPct, formatDate, formatFullDate, formatSigned } from "@/lib/format";
 import { shortDate, todayIso } from "@/lib/market";
 import { isTransfer, runningBalances, singleAccount, transferEndpoints } from "@/lib/ledger";
@@ -360,7 +360,7 @@ export function PanelView() {
 
   const trendPanel = (
     <Panel span={bento ? "xl:col-span-2 xl:row-span-2" : "xl:col-span-2"}>
-      <SectionTitle sub={`${formatPct(changePct(pat))} · ${periodLabel(period)}`} action={<Segmented options={PERIODS} value={period} onChange={setPeriod} />}>
+      <SectionTitle sub={`${formatPct(changePct(pat))} · ${periodLabel(period)}`} action={<Segmented options={periodOptions(period)} value={period} onChange={setPeriod} />}>
         Evolución del patrimonio
       </SectionTitle>
       <TrendChart values={pat} style={cs} height={isMobile ? 150 : bento ? 260 : 200} />
@@ -767,7 +767,7 @@ function AccountsList() {
     <Stack>
       <PageHeader kicker={`${active.length} cuentas activas${archived.length ? ` · ${archived.length} archivadas` : ""} · variación ${periodShort(period)}`} title="Cuentas" action={
         <>
-          <Segmented options={PERIODS} value={period} onChange={setPeriod} />
+          <Segmented options={periodOptions(period)} value={period} onChange={setPeriod} />
           <Btn variant="ghost" icon={<ArrowLeftRight className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "transfer" })}>Traspaso</Btn>
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "account" })}>Añadir cuenta</Btn>
         </>
@@ -1400,7 +1400,7 @@ function PortfolioList() {
     <Stack>
       <PageHeader kicker={`Cartera · precios de ${priceNote}`} title="Inversiones" action={
         <>
-          <Segmented options={PERIODS} value={period} onChange={setPeriod} />
+          <Segmented options={periodOptions(period)} value={period} onChange={setPeriod} />
           <Btn variant="ghost" icon={<RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />} onClick={handleRefresh} disabled={refreshing}>{refreshing ? "Actualizando…" : "Actualizar precios"}</Btn>
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "product" })}>Añadir producto</Btn>
         </>
@@ -1847,7 +1847,8 @@ function OperationsTable({ holding, onEdit, onNew }: { holding: Holding; onEdit:
 
 function ProductDetail({ id }: { id: number }) {
   const { arch, isMobile } = useArch();
-  const { holdings, accounts, back, openModal, period, setPeriod, go } = usePreview();
+  const { holdings, accounts, back, openModal, period, setPeriod, go, deleteHolding } = usePreview();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const h = holdings.find((x) => x.id === id);
   const full = useMemo(() => (h ? productSeries(h) : []), [h]);
   if (!h) return null;
@@ -1881,6 +1882,18 @@ function ProductDetail({ id }: { id: number }) {
       <PageHeader onBack={back} kicker={`${h.category} · ${h.ticker} · ${h.name} · ${acc?.name ?? ""}`} title={h.nickname} action={
         <>
           <Btn variant="ghost" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "editProduct", productId: h.id })}>Editar</Btn>
+          {confirmDelete ? (
+            <>
+              <Btn variant="ghost" onClick={() => setConfirmDelete(false)}>No</Btn>
+              <Btn variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => { if (deleteHolding(h.id)) go({ page: "inversiones" }); }}>
+                Sí, eliminar
+              </Btn>
+            </>
+          ) : (
+            <Btn variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setConfirmDelete(true)}>
+              Eliminar
+            </Btn>
+          )}
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: h.id })}>Nueva operación</Btn>
         </>
       } />
@@ -1888,7 +1901,7 @@ function ProductDetail({ id }: { id: number }) {
 
       <PanelGrid cols="grid-cols-1 xl:grid-cols-3">
         <Panel span="xl:col-span-2">
-          <SectionTitle sub={`Precio de mercado y tus compras · ${periodLabel(period).toLowerCase()}`} action={<Segmented options={PERIODS} value={period} onChange={setPeriod} />}>Evolución del precio</SectionTitle>
+          <SectionTitle sub={`Precio de mercado y tus compras · ${periodLabel(period).toLowerCase()}`} action={<Segmented options={periodOptions(period)} value={period} onChange={setPeriod} />}>Evolución del precio</SectionTitle>
           <PriceChartWithPurchases holding={h} series={win} period={period} height={isMobile ? 150 : 210} />
           <TimeAxis period={period} />
         </Panel>

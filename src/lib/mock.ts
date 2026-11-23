@@ -1,6 +1,7 @@
 /* Datos de ejemplo realistas para replicar la app (Bilibank). */
 
 import type { ColorRef } from "./colors";
+import { periodChipExtra } from "./series";
 
 export type AccountKind = "corriente" | "inversion";
 
@@ -413,3 +414,13 @@ export const PERIODS = [
   { id: "1A", label: "1A" },
   { id: "MAX", label: "Max" },
 ];
+
+/**
+ * Opciones del selector rápido de periodo. Si el periodo activo es un mes
+ * concreto o un rango a medida, se añade su propia opción delante para que el
+ * selector muestre siempre lo que se está viendo.
+ */
+export function periodOptions(current: string): { id: string; label: string }[] {
+  const extra = periodChipExtra(current);
+  return [...extra, ...PERIODS];
+}
