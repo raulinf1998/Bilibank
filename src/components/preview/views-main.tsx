@@ -16,6 +16,7 @@ import { FULL_DAYS, TODAY, addDays, periodChipExtra, periodRange, bucketLabels, 
 import { formatEUR, formatEUR0, formatNum, formatPct, formatDate, formatFullDate, formatSigned } from "@/lib/format";
 import { shortDate, todayIso } from "@/lib/market";
 import { isTransfer, runningBalances, singleAccount, transferEndpoints } from "@/lib/ledger";
+import { cashOf, cashOperation, productsValueOf, valueOf } from "@/lib/cash";
 import { CompareBars, Donut, HBars, MultiLines, Sparkline, StackedArea, StackedBars, TrendChart, downsample } from "./charts";
 import { PriceChartWithPurchases } from "./purchase-chart";
 import { operationResults, operationTotals } from "@/lib/operations";
@@ -38,8 +39,13 @@ function operationAmount(op: Operation): number {
   return op.units * op.price + op.fees;
 }
 
-export function accountSeries(a: Account): number[] {
-  return expandSeries([...a.history.slice(0, -1), a.balance], { spanDays: 335, seed: a.id });
+/**
+ * Serie del saldo de una cuenta. En las cuentas de inversión se dibuja el valor
+ * total (efectivo + productos), que es lo que suma en el patrimonio.
+ */
+export function accountSeries(a: Account, holdings: Holding[] = []): number[] {
+  const end = a.kind === "inversion" ? valueOf(a, holdings) : a.balance;
+  return expandSeries([...a.history.slice(0, -1), end], { spanDays: 335, seed: a.id });
 }
 
 /* ------------------------------ gasto del periodo ------------------------------ */
@@ -73,10 +79,8 @@ export function useTotals() {
     const liquid = accounts.filter((a) => a.kind === "corriente").reduce((s, a) => s + a.balance, 0);
     const invested = holdings.reduce((s, h) => s + holdingValue(h), 0);
     const investedCost = holdings.reduce((s, h) => s + h.invested, 0);
-    /** Efectivo disponible dentro de las cuentas de inversión (saldo menos el valor de sus productos) */
-    const investCash = accounts
-      .filter((a) => a.kind === "inversion")
-      .reduce((s, a) => s + Math.max(a.balance - holdings.filter((h) => h.accountId === a.id).reduce((x, h) => x + holdingValue(h), 0), 0), 0);
+    /** Efectivo disponible dentro de las cuentas de inversión (su caja sin invertir) */
+    const investCash = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + cashOf(a, holdings), 0);
     const net = liquid + invested + investCash;
     const head = SERIES.slice(0, -1);
     const ratio = invested / Math.max(invested + investCash, 1);
@@ -336,7 +340,7 @@ export function TxList({
 
 export function PanelView() {
   const { arch, cfg, isMobile, patchConfig } = useArch();
-  const { accounts, transactions, period, setPeriod, go, openModal } = usePreview();
+  const { accounts, holdings, transactions, period, setPeriod, go, openModal } = usePreview();
   const sp = useSpending();
   const t = useTotals();
   const openAccount = useOpenAccount();
@@ -441,7 +445,7 @@ export function PanelView() {
           colorIdx: a.colorIdx,
           title: a.name,
           sub: KIND_LABEL[a.kind],
-          value: formatEUR(a.balance),
+          value: formatEUR(valueOf(a, holdings)),
           onClick: () => openAccount(a.id),
         }))}
       />
@@ -597,7 +601,7 @@ function cardSurface(v: CardKey, c: string): CSSProperties {
   }
 }
 
-function WalletCard({ a, index, onOpen, variant }: { a: Account; index: number; onOpen: (id: number) => void; variant: CardKey }) {
+function WalletCard({ a, index, onOpen, variant, holdings }: { a: Account; index: number; onOpen: (id: number) => void; variant: CardKey; holdings: Holding[] }) {
   const { cfg } = useArch();
   const col = chartColor(a.colorIdx);
   /** En los estilos translúcidos el fondo real es el de la página: el texto sigue al tema */
@@ -634,7 +638,7 @@ function WalletCard({ a, index, onOpen, variant }: { a: Account; index: number; 
           </span>
           <p className="truncate text-[15px] font-semibold tracking-tight">{a.name}</p>
         </div>
-        <p className="pv-num shrink-0 text-[19px] font-bold tracking-tight">{formatEUR(a.balance)}</p>
+        <p className="pv-num shrink-0 text-[19px] font-bold tracking-tight">{formatEUR(valueOf(a, holdings))}</p>
       </div>
       <div className="relative mt-2.5 flex items-center justify-between">
         <span className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]" style={{ background: chipBg }}>{KIND_LABEL[a.kind]}</span>
@@ -645,7 +649,7 @@ function WalletCard({ a, index, onOpen, variant }: { a: Account; index: number; 
 }
 
 /** Pila de tarjetas a la izquierda y donut con el reparto a la derecha */
-function WalletLayout({ items, sum, onOpen, variant }: { items: Account[]; sum: number; onOpen: (id: number) => void; variant: CardKey }) {
+function WalletLayout({ items, sum, onOpen, variant, holdings }: { items: Account[]; sum: number; onOpen: (id: number) => void; variant: CardKey; holdings: Holding[] }) {
   const { arch, isMobile } = useArch();
   const cs = arch.chartStyle;
   if (items.length === 0) return <p className="pv-faint px-4 pb-6 text-center text-[12px]">Sin cuentas en esta sección.</p>;
@@ -661,11 +665,11 @@ function WalletLayout({ items, sum, onOpen, variant }: { items: Account[]; sum: 
           </div>
         )}
         {items.map((a, i) => (
-          <WalletCard key={a.id} a={a} index={i} onOpen={onOpen} variant={variant} />
+          <WalletCard key={a.id} a={a} index={i} onOpen={onOpen} variant={variant} holdings={holdings} />
         ))}
       </div>
       <div className="flex flex-col items-center gap-4">
-        <Donut slices={items.map((a) => ({ id: a.id, name: a.name, value: Math.max(a.balance, 0.01), colorIdx: a.colorIdx }))} style={cs} size={isMobile ? 150 : 176} centerLabel="Total" centerValue={formatEUR0(sum)} onSliceClick={(id) => typeof id === "number" && onOpen(id)} />
+        <Donut slices={items.map((a) => ({ id: a.id, name: a.name, value: Math.max(valueOf(a, holdings), 0.01), colorIdx: a.colorIdx }))} style={cs} size={isMobile ? 150 : 176} centerLabel="Total" centerValue={formatEUR0(sum)} onSliceClick={(id) => typeof id === "number" && onOpen(id)} />
         <div className="w-full">
           {items.map((a) => (
             <button key={a.id} type="button" onClick={() => onOpen(a.id)} className="pv-hit flex w-full items-center justify-between gap-3 px-2 py-1.5 text-left" style={{ borderRadius: 8 }}>
@@ -673,7 +677,7 @@ function WalletLayout({ items, sum, onOpen, variant }: { items: Account[]; sum: 
                 <span className="h-2.5 w-2.5 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 999 }} />
                 <span className="truncate text-[12px]" style={{ color: "var(--text)" }}>{a.name}</span>
               </span>
-              <span className="pv-num shrink-0 text-[11.5px] font-semibold" style={{ color: "var(--muted)" }}>{((a.balance / Math.max(sum, 1)) * 100).toFixed(0)} %</span>
+              <span className="pv-num shrink-0 text-[11.5px] font-semibold" style={{ color: "var(--muted)" }}>{((valueOf(a, holdings) / Math.max(sum, 1)) * 100).toFixed(0)} %</span>
             </button>
           ))}
         </div>
@@ -710,9 +714,12 @@ function CardStylePicker({ value, onChange }: { value: CardKey; onChange: (v: Ca
 
 function AccountsList() {
   const { arch, isMobile, cfg, patchConfig } = useArch();
-  const { accounts, openModal, period, setPeriod } = usePreview();
+  const { accounts, holdings, openModal, period, setPeriod } = usePreview();
   const openAccount = useOpenAccount();
-  const series = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, accountSeries(a)])) as Record<number, number[]>, [accounts]);
+  const series = useMemo(
+    () => Object.fromEntries(accounts.map((a) => [a.id, accountSeries(a, holdings)])) as Record<number, number[]>,
+    [accounts, holdings],
+  );
   const win = (a: Account) => windowSeries(series[a.id], period);
   const delta = (a: Account) => {
     const w = win(a);
@@ -726,7 +733,8 @@ function AccountsList() {
   const current = active.filter((a) => a.kind === "corriente");
   const invest = active.filter((a) => a.kind === "inversion");
   const totalCurrent = accounts.filter((a) => a.kind === "corriente").reduce((s, a) => s + a.balance, 0);
-  const totalInvest = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + a.balance, 0);
+  /* En las cuentas de inversión el saldo es efectivo; su valor suma productos. */
+  const totalInvest = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + valueOf(a, holdings), 0);
   const total = totalCurrent + totalInvest;
   const totalDelta = accounts.reduce((s, a) => s + delta(a), 0);
   const cs = arch.chartStyle;
@@ -749,7 +757,7 @@ function AccountsList() {
         <SectionTitle sub={`${items.length} cuentas · ${formatEUR(sum)}`}>{title}</SectionTitle>
       </div>
       {cards && !isMobile ? (
-        <WalletLayout items={items} sum={sum} onOpen={openAccount} variant={cardStyle} />
+        <WalletLayout items={items} sum={sum} onOpen={openAccount} variant={cardStyle} holdings={holdings} />
       ) : (
         <RowList
           items={items.map((a) => {
@@ -760,7 +768,7 @@ function AccountsList() {
               colorIdx: a.colorIdx,
               title: a.name,
               sub: archivedGroup ? `${KIND_LABEL[a.kind]} · archivada` : KIND_LABEL[a.kind],
-              value: formatEUR(a.balance),
+              value: formatEUR(valueOf(a, holdings)),
               sub2: formatSigned(d),
               sub2Tone: (d >= 0 ? "pos" : "neg") as "pos" | "neg",
               extra: !isMobile && arch.list !== "dense" ? <Sparkline values={win(a)} positive={d >= 0} style={cs} width={70} height={24} /> : undefined,
@@ -789,7 +797,7 @@ function AccountsList() {
       </PanelGrid>
       {archived.length > 0 && (
         <div className="mt-4">
-          {group("Archivadas", archived, archived.reduce((s, a) => s + a.balance, 0), true)}
+          {group("Archivadas", archived, archived.reduce((s, a) => s + valueOf(a, holdings), 0), true)}
         </div>
       )}
     </Stack>
@@ -813,8 +821,8 @@ function AccountDetail({ id }: { id: number }) {
 
 function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedded?: boolean }) {
   const { arch, isMobile } = useArch();
-  const { accounts, transactions, categories, back, openModal, period } = usePreview();
-  const full = useMemo(() => accountSeries(acc), [acc]);
+  const { accounts, holdings, transactions, categories, back, openModal, period } = usePreview();
+  const full = useMemo(() => accountSeries(acc, holdings), [acc, holdings]);
   const all = transactions.filter((t) => t.accountId === acc.id);
   const txs = all.filter((t) => inPeriod(t.date, period));
   const win = windowSeries(full, period);
@@ -893,7 +901,7 @@ function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedde
 function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embedded?: boolean }) {
   const { arch, isMobile } = useArch();
   const { accounts, holdings, transactions, categories, back, openModal, go, period } = usePreview();
-  const full = useMemo(() => accountSeries(acc), [acc]);
+  const full = useMemo(() => accountSeries(acc, holdings), [acc, holdings]);
   const all = transactions.filter((t) => t.accountId === acc.id);
   const txs = all.filter((t) => inPeriod(t.date, period));
   const win = windowSeries(full, period);
@@ -904,9 +912,13 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
   const investedCost = prods.reduce((s, h) => s + h.invested, 0);
   const gain = productsValue - investedCost;
   const gainPct = investedCost > 0 ? (gain / investedCost) * 100 : 0;
-  const cash = Math.max(acc.balance - productsValue, 0);
+  /* El efectivo es la caja real de la cuenta: el dinero aportado que aún no se
+     ha invertido. Las compras ya lo han descontado y los traspasos lo suman. */
+  const cash = cashOf(acc, holdings);
   const total = productsValue + cash;
   const investedPct = total > 0 ? (productsValue / total) * 100 : 0;
+  /* Dinero que ha entrado en la cuenta y sigue dentro (invertido al coste + caja). */
+  const contributed = investedCost + cash;
   const funding = txs.filter((t) => t.categoryId === 0);
   const fundingNet = funding.reduce((s, t) => s + t.amount, 0);
 
@@ -926,7 +938,7 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
     const linked = new Set(transactions.filter((t) => t.productId !== undefined).map((t) => `${t.productId}:${t.operationId}`));
     return prods.reduce(
       (sum, holding) =>
-        sum + holding.operations.filter((op) => (op.type === "compra" || op.type === "aportacion") && op.units > 0 && !linked.has(`${holding.id}:${op.id}`)).length,
+        sum + holding.operations.filter((op) => cashOperation(op) && !linked.has(`${holding.id}:${op.id}`)).length,
       0,
     );
   }, [prods, transactions]);
@@ -934,7 +946,7 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
   const kpis = [
     { label: "Valor total", value: formatEUR(total), delta: formatPct(changePct(win)), trend: trend(changePct(win)), icon: <Briefcase className="h-4 w-4" />, colorIdx: acc.colorIdx, footnote: `productos + efectivo · ${periodShort(period)}`, pct: 100 },
     { label: "En productos", value: formatEUR(productsValue), footnote: `${prods.length} productos · ${investedPct.toFixed(0)} % invertido`, icon: <TrendingUp className="h-4 w-4" />, colorIdx: 1, pct: investedPct },
-    { label: "Efectivo sin invertir", value: formatEUR(cash), footnote: "disponible para comprar", icon: <Wallet className="h-4 w-4" />, colorIdx: 4, pct: 100 - investedPct },
+    { label: "Efectivo sin invertir", value: formatEUR(cash), footnote: `aportado ${formatEUR(contributed)} · ${formatEUR(investedCost)} invertido`, icon: <Wallet className="h-4 w-4" />, colorIdx: 4, pct: 100 - investedPct },
     { label: "Ganancia latente", value: formatSigned(gain), delta: formatPct(gainPct), trend: trend(gain), icon: <PiggyBank className="h-4 w-4" />, colorIdx: 3, footnote: `invertido ${formatEUR0(investedCost)}`, pct: Math.min(100, Math.abs(gainPct) * 4) },
   ];
 
@@ -1017,8 +1029,8 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
             <p className="mx-4 mb-2 flex items-start gap-2 text-[11.5px] leading-snug" style={{ color: "var(--accent)" }}>
               <ReceiptText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
-                Hay {opsMissingExpenses} {opsMissingExpenses === 1 ? "compra" : "compras"} sin gasto anotado en la cuenta.
-                Abre cada producto y pulsa «Anotar gastos» para registrarlas.
+                Hay {opsMissingExpenses} {opsMissingExpenses === 1 ? "operación" : "operaciones"} sin movimiento en la cuenta.
+                Abre cada producto y pulsa «Anotar» para registrarlas.
               </span>
             </p>
           )}
@@ -1547,6 +1559,7 @@ function PortfolioList() {
                     <p className="pv-faint text-[11px]">
                       {items.length} {items.length === 1 ? "producto" : "productos"} · {formatEUR(v)}
                       {total > 0 ? ` · ${((v / total) * 100).toFixed(0)} % de la cartera` : ""}
+                      {` · ${formatEUR(cashOf(acc, holdings))} sin invertir`}
                     </p>
                   </div>
                 </div>
@@ -1951,11 +1964,12 @@ function ProductDetail({ id }: { id: number }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const h = holdings.find((x) => x.id === id);
   const full = useMemo(() => (h ? productSeries(h) : []), [h]);
-  /* Compras del producto que aún no tienen su gasto anotado en la cuenta. */
+  /* Operaciones del producto que mueven dinero y aún no tienen su movimiento
+     anotado en la cuenta (típico tras importar de otra app). */
   const missingExpenses = useMemo(() => {
     if (!h) return [];
     const linked = new Set(transactions.filter((t) => t.productId === h.id).map((t) => t.operationId));
-    return h.operations.filter((op) => (op.type === "compra" || op.type === "aportacion") && op.units > 0 && !linked.has(op.id));
+    return h.operations.filter((op) => cashOperation(op) && !linked.has(op.id));
   }, [h, transactions]);
   if (!h) return null;
   const acc = accounts.find((a) => a.id === h.accountId);
@@ -2003,10 +2017,10 @@ function ProductDetail({ id }: { id: number }) {
           <Btn
             variant="ghost"
             icon={<ReceiptText className="h-3.5 w-3.5" />}
-            aria={missingExpenses.length > 0 ? `Anotar como gasto las ${missingExpenses.length} compras que faltan` : "Los gastos de este producto están al día"}
+            aria={missingExpenses.length > 0 ? `Anotar en la cuenta los ${missingExpenses.length} movimientos que faltan de este producto` : "Las operaciones de este producto ya están anotadas en la cuenta"}
             onClick={() => syncProductExpenses(h.id)}
           >
-            {missingExpenses.length > 0 ? `Anotar ${missingExpenses.length} ${missingExpenses.length === 1 ? "gasto" : "gastos"}` : "Gastos al día"}
+            {missingExpenses.length > 0 ? `Anotar ${missingExpenses.length} ${missingExpenses.length === 1 ? "movimiento" : "movimientos"}` : "Al día"}
           </Btn>
           <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: h.id })}>Nueva operación</Btn>
         </>

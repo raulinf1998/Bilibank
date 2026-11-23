@@ -38,8 +38,14 @@ El resto de ficheros del ZIP se descartan, pero se aceptan sin problema.
 - **Carteras.** Si una cartera se llama igual que una cuenta bancaria
   (`MyInvestor`), la cuenta de inversión se muestra como
   `MyInvestor · inversión` para no confundirlas.
-- **Cuentas de inversión.** Su saldo es el valor de sus productos más el
-  efectivo de la cartera; su histórico sale de las aportaciones acumuladas.
+- **Cuentas de inversión.** El saldo de la cuenta es su **efectivo sin
+  invertir** (`CashBalances` de `portfolios.csv`, que ya viene descontadas las
+  compras) y los productos se suman aparte: el valor de la cuenta es
+  efectivo + productos. Su histórico sale de las aportaciones acumuladas.
+- **Compras ya pagadas.** Las operaciones de `investment_transactions.csv`
+  llegan marcadas como ya pagadas con ese efectivo, así que no se vuelven a
+  cobrar en la cuenta. Un producto nuevo que registres a mano sí descuenta su
+  compra del efectivo.
 - **Ventana temporal.** Al importar, la app ancla «hoy» al último movimiento
   del export (`setTodayReference`), de forma que los periodos (1M, 3M, 1A,
   «Todo») y las gráficas apuntan a tus fechas reales.

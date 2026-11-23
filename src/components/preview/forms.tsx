@@ -15,6 +15,7 @@ import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown, todayIso } 
 import { buildCsvFiles, buildCsvZip, downloadBytes, downloadCsv, downloadCsvZip, downloadText } from "@/lib/csv-export";
 import { buildBackupBundle, buildBackupJson, buildReadableHtml } from "@/lib/backup";
 import { isTransfer, transferEndpoints } from "@/lib/ledger";
+import { cashOf } from "@/lib/cash";
 import { formatEUR, formatEUR0, formatFullDate, formatNum, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, RowList, Segmented, Select } from "./primitives";
 import { DateField } from "./datefield";
@@ -92,7 +93,7 @@ const TYPE_ICON: Record<TxType, React.ReactNode> = {
 
 const accIcon = (a: Account) => (a.kind === "inversion" ? <Briefcase className="h-4 w-4" /> : <Landmark className="h-4 w-4" />);
 
-function AccountCard({ a, selected, onPick }: { a: Account; selected: boolean; onPick: () => void }) {
+function AccountCard({ a, selected, onPick, holdings }: { a: Account; selected: boolean; onPick: () => void; holdings: Holding[] }) {
   const col = chartColor(a.colorIdx);
   return (
     <button
@@ -109,7 +110,9 @@ function AccountCard({ a, selected, onPick }: { a: Account; selected: boolean; o
       <IconBadge icon={accIcon(a)} colorIdx={a.colorIdx} size={28} />
       <div className="w-full min-w-0">
         <p className="truncate text-[12px] font-semibold leading-tight" style={{ color: "var(--text)" }} title={a.name}>{a.name}</p>
-        <p className="pv-num pv-faint truncate text-[11px]">{formatEUR(a.balance)}</p>
+        <p className="pv-num pv-faint truncate text-[11px]">
+          {formatEUR(a.kind === "inversion" ? a.balance + holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + h.units * h.price, 0) : a.balance)}
+        </p>
       </div>
     </button>
   );
@@ -132,7 +135,7 @@ function TransactionForm({
   initialType?: TxType;
   onClose: () => void;
 }) {
-  const { accounts, categories, transactions, addTransaction, updateTransaction, addTransfer, updateTransfer, deleteTransaction } = usePreview();
+  const { accounts, categories, holdings, transactions, addTransaction, updateTransaction, addTransfer, updateTransfer, deleteTransaction } = usePreview();
   const editing = txId === undefined ? undefined : transactions.find((t) => t.id === txId);
   const transferEdit = editing ? editing.categoryId === 0 : false;
   const ends = editing && transferEdit ? transferEndpoints(editing, transactions, accounts) : null;
@@ -284,11 +287,11 @@ function TransactionForm({
           <div className="flex flex-col gap-4">
             <div>
               <span className="pv-muted mb-2 block text-[11px] font-bold uppercase tracking-[0.1em]">Desde</span>
-              <div className="grid grid-cols-3 gap-2">{pickable([fromId]).map((a) => <AccountCard key={a.id} a={a} selected={fromId === a.id} onPick={() => setFromId(a.id)} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([fromId]).map((a) => <AccountCard key={a.id} a={a} selected={fromId === a.id} onPick={() => setFromId(a.id)} holdings={holdings} />)}</div>
             </div>
             <div>
               <span className="pv-muted mb-2 block text-[11px] font-bold uppercase tracking-[0.1em]">Hacia</span>
-              <div className="grid grid-cols-3 gap-2">{pickable([toId]).map((a) => <AccountCard key={a.id} a={a} selected={toId === a.id} onPick={() => setToId(a.id)} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([toId]).map((a) => <AccountCard key={a.id} a={a} selected={toId === a.id} onPick={() => setToId(a.id)} holdings={holdings} />)}</div>
             </div>
             <Field label="Concepto"><Input placeholder="Aportación mensual…" value={concept} onChange={(e) => setConcept(e.target.value)} /></Field>
           </div>
@@ -299,7 +302,7 @@ function TransactionForm({
                 <span className="pv-muted text-[11px] font-bold uppercase tracking-[0.1em]">Cuenta</span>
                 <span className="pv-faint text-[11px]">{pickable([accId]).length} cuentas</span>
               </div>
-              <div className="grid grid-cols-3 gap-2">{pickable([accId]).map((a) => <AccountCard key={a.id} a={a} selected={accId === a.id} onPick={() => setAccId(a.id)} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([accId]).map((a) => <AccountCard key={a.id} a={a} selected={accId === a.id} onPick={() => setAccId(a.id)} holdings={holdings} />)}</div>
             </div>
 
             <div>
@@ -955,7 +958,7 @@ function SearchModal({ onClose }: { onClose: () => void }) {
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Mercadona, VWCE, Ocio, Nómina…" className="w-full bg-transparent text-[13px] outline-none" style={{ color: "var(--text)" }} />
         </div>
         {empty && <p className="pv-faint py-6 text-center text-[12px]">Sin resultados para «{q}»</p>}
-        {accs.length > 0 && <SearchGroup title="Cuentas">{accs.map((a) => <SearchRow key={a.id} icon={<IconBadge icon={accIcon(a)} colorIdx={a.colorIdx} size={30} />} title={a.name} sub={`${KIND_LABEL[a.kind]} · ${formatEUR(a.balance)}`} onPick={() => openAccount(a.id)} />)}</SearchGroup>}
+        {accs.length > 0 && <SearchGroup title="Cuentas">{accs.map((a) => <SearchRow key={a.id} icon={<IconBadge icon={accIcon(a)} colorIdx={a.colorIdx} size={30} />} title={a.name} sub={`${KIND_LABEL[a.kind]} · ${formatEUR(a.kind === "inversion" ? a.balance + holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + h.units * h.price, 0) : a.balance)}`} onPick={() => openAccount(a.id)} />)}</SearchGroup>}
         {prods.length > 0 && <SearchGroup title="Productos">{prods.map((h) => <SearchRow key={h.id} icon={<IconBadge icon={<span className="pv-num text-[9px] font-bold">{h.ticker.slice(0, 3)}</span>} colorIdx={h.colorIdx} size={30} />} title={`${h.ticker} · ${h.name}`} sub={h.type} onPick={() => go({ page: "inversiones", productId: h.id })} />)}</SearchGroup>}
         {cats.length > 0 && <SearchGroup title="Categorías">{cats.map((c) => <SearchRow key={c.id} icon={<IconBadge icon={catIcon(c)} colorIdx={c.colorIdx} size={30} />} title={c.name} sub={c.subcategories.map((s) => s.name).join(", ")} onPick={() => { onClose(); openModal({ kind: "categoryTx", categoryId: c.id }); }} />)}</SearchGroup>}
         {txs.length > 0 && <SearchGroup title="Movimientos">{txs.map((t) => <SearchRow key={t.id} icon={<IconBadge icon={catIcon(categories.find((c) => c.id === t.categoryId))} colorIdx={categories.find((c) => c.id === t.categoryId)?.colorIdx ?? 0} size={30} />} title={t.concept} sub={`${formatFullDate(t.date)} · ${formatSigned(t.amount)}`} onPick={() => openModal({ kind: "txDetail", txId: t.id })} />)}</SearchGroup>}
@@ -1159,6 +1162,8 @@ function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: 
   const [kind, setKind] = useState<AccountKind>(acc?.kind ?? "corriente");
   const [color, setColor] = useState<ColorRef>(acc?.colorIdx ?? 0);
   const [archived, setArchived] = useState(Boolean(acc?.archived));
+  /* Efectivo disponible de una cuenta de inversión (lo que aún no está invertido). */
+  const [cash, setCash] = useState(acc && acc.kind === "inversion" ? String(Math.round(cashOf(acc, holdings) * 100) / 100) : "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   if (!acc) return null;
 
@@ -1168,7 +1173,10 @@ function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: 
   const changed = kind !== acc.kind;
 
   const save = () => {
-    updateAccount(acc.id, { name: name.trim(), kind, colorIdx: color });
+    const patch: Partial<Account> = { name: name.trim(), kind, colorIdx: color };
+    /* Al pasar a cuenta de inversión, el saldo actual se convierte en su efectivo. */
+    if (kind === "inversion") patch.cash = cash.trim() === "" ? 0 : Number(cash.replace(",", ".")) || 0;
+    updateAccount(acc.id, patch);
     if (archived !== Boolean(acc.archived)) setAccountArchived(acc.id, archived);
     onClose();
   };
@@ -1188,6 +1196,12 @@ function EditAccountModal({ accountId, onClose }: { accountId: number; onClose: 
       <div className="flex flex-col gap-3.5">
         <Field label="Nombre"><Input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
         <Field label="Tipo de cuenta"><AccountKindPicker value={kind} onChange={setKind} /></Field>
+        {kind === "inversion" && (
+          <Field label="Efectivo sin invertir (€)">
+            <Input inputMode="decimal" placeholder="0,00" value={cash} onChange={(e) => setCash(e.target.value.replace(",", "."))} />
+            <p className="pv-faint mt-1 text-[11px] leading-snug">Dinero disponible en la cuenta para comprar. Los productos no cuentan aquí: su valor se suma aparte.</p>
+          </Field>
+        )}
         {blocked && (
           <p className="flex items-start gap-2 text-[12px] leading-snug" style={{ color: "var(--neg)" }}>
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
