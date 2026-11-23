@@ -6,6 +6,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { buildSnapshot, type ImportSummary } from "@/lib/moneymatter";
 import { findBackupInZip } from "@/lib/backup";
 import { PERIODS, holdingValue, subColor, periodOptions } from "@/lib/mock";
+import { valueOf } from "@/lib/cash";
 import { DATA_COLORS, DATA_COLOR_NAMES, chartColor } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
 import { TODAY, addDays, setTodayReference, bucketLabels, bucketize, changePct, flowsFor, inPeriod, periodLabel, periodMonths, periodRange, periodShort, sampleAtBuckets, windowSeries } from "@/lib/series";
@@ -281,11 +282,11 @@ export function ChartsView() {
         .map((a) => ({
           id: a.id,
           name: a.name,
-          value: Math.max(a.balance + (a.kind === "inversion" ? holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + holdingValue(h), 0) : 0), 0.01),
+          value: Math.max(valueOf(a, holdings, transactions), 0.01),
           colorIdx: a.colorIdx,
         }))
         .sort((a, b) => b.value - a.value),
-    [accounts, holdings],
+    [accounts, holdings, transactions],
   );
 
   const heat = useMemo(() => {

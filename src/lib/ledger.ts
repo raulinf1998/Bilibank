@@ -67,7 +67,12 @@ export function runningBalances(accounts: Account[], transactions: Tx[]): Map<nu
 
   for (const account of accounts) {
     const own = transactions.filter((t) => t.accountId === account.id).sort(order);
-    let balance = account.kind === "inversion" ? (account.cash ?? account.balance) : account.balance;
+    /* El efectivo de una cuenta de inversión es dinero inicial + movimientos:
+       se rehace desde el principio para no depender de la caché `cash`. */
+    let balance =
+      account.kind === "inversion"
+        ? (account.cashOpening ?? 0) + own.reduce((sum, t) => sum + t.amount, 0)
+        : account.balance;
     for (let i = own.length - 1; i >= 0; i--) {
       const tx = own[i];
       out.set(tx.id, Math.round(balance * 100) / 100);

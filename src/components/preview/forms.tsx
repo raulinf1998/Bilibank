@@ -15,7 +15,7 @@ import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown, todayIso } 
 import { buildCsvFiles, buildCsvZip, downloadBytes, downloadCsv, downloadCsvZip, downloadText } from "@/lib/csv-export";
 import { buildBackupBundle, buildBackupJson, buildReadableHtml } from "@/lib/backup";
 import { isTransfer, transferEndpoints } from "@/lib/ledger";
-import { cashOf } from "@/lib/cash";
+import { cashOf, valueOf } from "@/lib/cash";
 import { formatEUR, formatEUR0, formatFullDate, formatNum, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, RowList, Segmented, Select } from "./primitives";
 import { DateField } from "./datefield";
@@ -93,7 +93,7 @@ const TYPE_ICON: Record<TxType, React.ReactNode> = {
 
 const accIcon = (a: Account) => (a.kind === "inversion" ? <Briefcase className="h-4 w-4" /> : <Landmark className="h-4 w-4" />);
 
-function AccountCard({ a, selected, onPick, holdings }: { a: Account; selected: boolean; onPick: () => void; holdings: Holding[] }) {
+function AccountCard({ a, selected, onPick, holdings, transactions }: { a: Account; selected: boolean; onPick: () => void; holdings: Holding[]; transactions: Tx[] }) {
   const col = chartColor(a.colorIdx);
   return (
     <button
@@ -111,7 +111,7 @@ function AccountCard({ a, selected, onPick, holdings }: { a: Account; selected: 
       <div className="w-full min-w-0">
         <p className="truncate text-[12px] font-semibold leading-tight" style={{ color: "var(--text)" }} title={a.name}>{a.name}</p>
         <p className="pv-num pv-faint truncate text-[11px]">
-          {formatEUR(a.kind === "inversion" ? a.balance + holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + h.units * h.price, 0) : a.balance)}
+          {formatEUR(valueOf(a, holdings, transactions))}
         </p>
       </div>
     </button>
@@ -287,11 +287,11 @@ function TransactionForm({
           <div className="flex flex-col gap-4">
             <div>
               <span className="pv-muted mb-2 block text-[11px] font-bold uppercase tracking-[0.1em]">Desde</span>
-              <div className="grid grid-cols-3 gap-2">{pickable([fromId]).map((a) => <AccountCard key={a.id} a={a} selected={fromId === a.id} onPick={() => setFromId(a.id)} holdings={holdings} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([fromId]).map((a) => <AccountCard key={a.id} a={a} selected={fromId === a.id} onPick={() => setFromId(a.id)} holdings={holdings} transactions={transactions} />)}</div>
             </div>
             <div>
               <span className="pv-muted mb-2 block text-[11px] font-bold uppercase tracking-[0.1em]">Hacia</span>
-              <div className="grid grid-cols-3 gap-2">{pickable([toId]).map((a) => <AccountCard key={a.id} a={a} selected={toId === a.id} onPick={() => setToId(a.id)} holdings={holdings} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([toId]).map((a) => <AccountCard key={a.id} a={a} selected={toId === a.id} onPick={() => setToId(a.id)} holdings={holdings} transactions={transactions} />)}</div>
             </div>
             <Field label="Concepto"><Input placeholder="Aportación mensual…" value={concept} onChange={(e) => setConcept(e.target.value)} /></Field>
           </div>
@@ -302,7 +302,7 @@ function TransactionForm({
                 <span className="pv-muted text-[11px] font-bold uppercase tracking-[0.1em]">Cuenta</span>
                 <span className="pv-faint text-[11px]">{pickable([accId]).length} cuentas</span>
               </div>
-              <div className="grid grid-cols-3 gap-2">{pickable([accId]).map((a) => <AccountCard key={a.id} a={a} selected={accId === a.id} onPick={() => setAccId(a.id)} holdings={holdings} />)}</div>
+              <div className="grid grid-cols-3 gap-2">{pickable([accId]).map((a) => <AccountCard key={a.id} a={a} selected={accId === a.id} onPick={() => setAccId(a.id)} holdings={holdings} transactions={transactions} />)}</div>
             </div>
 
             <div>
@@ -958,7 +958,7 @@ function SearchModal({ onClose }: { onClose: () => void }) {
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Mercadona, VWCE, Ocio, Nómina…" className="w-full bg-transparent text-[13px] outline-none" style={{ color: "var(--text)" }} />
         </div>
         {empty && <p className="pv-faint py-6 text-center text-[12px]">Sin resultados para «{q}»</p>}
-        {accs.length > 0 && <SearchGroup title="Cuentas">{accs.map((a) => <SearchRow key={a.id} icon={<IconBadge icon={accIcon(a)} colorIdx={a.colorIdx} size={30} />} title={a.name} sub={`${KIND_LABEL[a.kind]} · ${formatEUR(a.kind === "inversion" ? a.balance + holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + h.units * h.price, 0) : a.balance)}`} onPick={() => openAccount(a.id)} />)}</SearchGroup>}
+        {accs.length > 0 && <SearchGroup title="Cuentas">{accs.map((a) => <SearchRow key={a.id} icon={<IconBadge icon={accIcon(a)} colorIdx={a.colorIdx} size={30} />} title={a.name} sub={`${KIND_LABEL[a.kind]} · ${formatEUR(valueOf(a, holdings, transactions))}`} onPick={() => openAccount(a.id)} />)}</SearchGroup>}
         {prods.length > 0 && <SearchGroup title="Productos">{prods.map((h) => <SearchRow key={h.id} icon={<IconBadge icon={<span className="pv-num text-[9px] font-bold">{h.ticker.slice(0, 3)}</span>} colorIdx={h.colorIdx} size={30} />} title={`${h.ticker} · ${h.name}`} sub={h.type} onPick={() => go({ page: "inversiones", productId: h.id })} />)}</SearchGroup>}
         {cats.length > 0 && <SearchGroup title="Categorías">{cats.map((c) => <SearchRow key={c.id} icon={<IconBadge icon={catIcon(c)} colorIdx={c.colorIdx} size={30} />} title={c.name} sub={c.subcategories.map((s) => s.name).join(", ")} onPick={() => { onClose(); openModal({ kind: "categoryTx", categoryId: c.id }); }} />)}</SearchGroup>}
         {txs.length > 0 && <SearchGroup title="Movimientos">{txs.map((t) => <SearchRow key={t.id} icon={<IconBadge icon={catIcon(categories.find((c) => c.id === t.categoryId))} colorIdx={categories.find((c) => c.id === t.categoryId)?.colorIdx ?? 0} size={30} />} title={t.concept} sub={`${formatFullDate(t.date)} · ${formatSigned(t.amount)}`} onPick={() => openModal({ kind: "txDetail", txId: t.id })} />)}</SearchGroup>}

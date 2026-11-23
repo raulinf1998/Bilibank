@@ -8,6 +8,7 @@ import { NAV, type NavId } from "@/lib/mock";
 import { chartColor } from "@/lib/colors";
 import { iconNode } from "@/lib/icons";
 import { formatEUR, formatEUR0, formatPct } from "@/lib/format";
+import { valueOf } from "@/lib/cash";
 import { ArchProvider, useArch, usePreview } from "./state";
 import { Btn, Toast } from "./primitives";
 import { ModalHost } from "./forms";
@@ -132,7 +133,7 @@ function Frame({ fullBleed = false }: { fullBleed?: boolean }) {
 
 function SidebarShell({ children }: { children: ReactNode }) {
   const { current, nav, newTx } = useNav();
-  const { accounts, holdings, go, openModal } = usePreview();
+  const { accounts, holdings, transactions, go, openModal } = usePreview();
   const { net } = useTotals();
   return (
     <div className="flex">
@@ -156,7 +157,7 @@ function SidebarShell({ children }: { children: ReactNode }) {
             <p className="pv-faint mt-4 px-4 text-[10px] font-bold uppercase tracking-[0.14em]">{k === "corriente" ? "Corrientes" : "Inversión"}</p>
             <ul className="mt-1 px-3">
               {accounts.filter((a) => a.kind === k && !a.archived).map((a) => (
-                <li key={a.id}><button type="button" onClick={() => go({ page: "cuentas", accountId: a.id })} className="pv-nav-item flex w-full items-center justify-between gap-2 px-2.5 py-1.5"><span className="truncate text-[11.5px]">{a.name}</span><span className="pv-num shrink-0 text-[11px] font-semibold" style={{ color: "var(--text)" }}>{formatEUR0(a.kind === "inversion" ? a.balance + holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + h.units * h.price, 0) : a.balance)}</span></button></li>
+                <li key={a.id}><button type="button" onClick={() => go({ page: "cuentas", accountId: a.id })} className="pv-nav-item flex w-full items-center justify-between gap-2 px-2.5 py-1.5"><span className="truncate text-[11.5px]">{a.name}</span><span className="pv-num shrink-0 text-[11px] font-semibold" style={{ color: "var(--text)" }}>{formatEUR0(valueOf(a, holdings, transactions))}</span></button></li>
               ))}
             </ul>
           </div>
@@ -255,7 +256,7 @@ function AppBarShell({ children }: { children: ReactNode }) {
 
 function ExplorerShell({ children }: { children: ReactNode }) {
   const { current, nav, newTx } = useNav();
-  const { accounts, categories, holdings, route, go, openModal } = usePreview();
+  const { accounts, categories, holdings, transactions, route, go, openModal } = usePreview();
   const { net } = useTotals();
   const [open, setOpen] = useState<Record<string, boolean>>({ cur: true, inv: true, cat: true });
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
@@ -301,8 +302,8 @@ function ExplorerShell({ children }: { children: ReactNode }) {
         <aside className="w-[252px] shrink-0 border-r py-2" style={{ background: "var(--sidebar)", borderColor: "var(--border-strong)" }}>
           <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: "var(--faint)", ...mono }}>Explorador · Bilibank</p>
           <div className="flex flex-col gap-1.5">
-            {group("cur", "cuentas_corrientes", accounts.filter((a) => a.kind === "corriente" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.kind === "inversion" ? a.balance + holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + h.units * h.price, 0) : a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
-            {group("inv", "cuentas_inversion", accounts.filter((a) => a.kind === "inversion" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(a.kind === "inversion" ? a.balance + holdings.filter((h) => h.accountId === a.id).reduce((sum, h) => sum + h.units * h.price, 0) : a.balance), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
+            {group("cur", "cuentas_corrientes", accounts.filter((a) => a.kind === "corriente" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(valueOf(a, holdings, transactions)), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
+            {group("inv", "cuentas_inversion", accounts.filter((a) => a.kind === "inversion" && !a.archived).map((a) => ({ id: a.id, name: a.name, right: formatEUR0(valueOf(a, holdings, transactions)), color: <span className="h-2 w-2 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 2 }} />, active: route.accountId === a.id, onClick: () => go({ page: "cuentas", accountId: a.id }) })))}
             {group("cat", "categorias", categories.map((c) => ({ id: c.id, name: c.name, right: `${c.subcategories.length}`, color: <span className="shrink-0" style={{ color: chartColor(c.colorIdx) }}>{iconNode(c.icon)}</span>, active: route.categoryId === c.id, onClick: () => openModal({ kind: "categoryTx", categoryId: c.id }) })))}
           </div>
         </aside>

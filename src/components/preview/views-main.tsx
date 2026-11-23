@@ -640,10 +640,23 @@ function WalletCard({ a, index, onOpen, variant, holdings, transactions }: { a: 
         </div>
         <p className="pv-num shrink-0 text-[19px] font-bold tracking-tight">{formatEUR(valueOf(a, holdings, transactions))}</p>
       </div>
-      <div className="relative mt-2.5 flex items-center justify-between">
-        <span className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]" style={{ background: chipBg }}>{KIND_LABEL[a.kind]}</span>
-        <span className="pv-num text-[11px] font-semibold" style={{ opacity: 0.85 }}>{a.kind === "inversion" ? "Inversión" : "Disponible"}</span>
-      </div>
+      {a.kind === "inversion" ? (
+        /* En una cuenta de inversión el valor es productos + efectivo: la
+           tarjeta abre el total en sus dos mitades. */
+        <div className="relative mt-2.5 flex items-center justify-between gap-2">
+          <span className="pv-num min-w-0 truncate text-[11.5px] font-semibold" style={{ opacity: 0.9 }}>
+            {formatEUR(productsValueOf(a.id, holdings))} en productos
+          </span>
+          <span className="pv-num min-w-0 truncate text-right text-[11.5px] font-semibold" style={{ opacity: 0.9 }}>
+            {formatEUR(cashOf(a, holdings, transactions))} sin invertir
+          </span>
+        </div>
+      ) : (
+        <div className="relative mt-2.5 flex items-center justify-between gap-2">
+          <span className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]" style={{ background: chipBg }}>{KIND_LABEL[a.kind]}</span>
+          <span className="pv-num text-[11px] font-semibold" style={{ opacity: 0.85 }}>Disponible</span>
+        </div>
+      )}
     </button>
   );
 }
@@ -767,7 +780,10 @@ function AccountsList() {
               icon: a.kind === "inversion" ? <Briefcase className="h-4 w-4" /> : a.name === "Efectivo" ? <Coins className="h-4 w-4" /> : <Landmark className="h-4 w-4" />,
               colorIdx: a.colorIdx,
               title: a.name,
-              sub: archivedGroup ? `${KIND_LABEL[a.kind]} · archivada` : KIND_LABEL[a.kind],
+              sub:
+                a.kind === "inversion"
+                  ? `${productsValueOf(a.id, holdings) === 0 ? "0 productos" : `${formatEUR(productsValueOf(a.id, holdings))} en productos`} · ${formatEUR(cashOf(a, holdings, transactions))} sin invertir${archivedGroup ? " · archivada" : ""}`
+                  : archivedGroup ? `${KIND_LABEL[a.kind]} · archivada` : KIND_LABEL[a.kind],
               value: formatEUR(valueOf(a, holdings, transactions)),
               sub2: formatSigned(d),
               sub2Tone: (d >= 0 ? "pos" : "neg") as "pos" | "neg",
@@ -1418,6 +1434,8 @@ function PortfolioList() {
   const cost = scope.reduce((sum, h) => sum + h.invested, 0);
   const gain = total - cost;
   const gainPct = cost > 0 ? (gain / cost) * 100 : 0;
+  /* Efectivo sin invertir de las cuentas que se están viendo. */
+  const invCash = scopeAccounts.reduce((sum, a) => sum + cashOf(a, holdings, transactions), 0);
 
   /** Productos que se dibujan en la evolución (según el selector) */
   const chartProducts = selProducts ? scope.filter((h) => selProducts.includes(h.id)) : scope;
@@ -1536,7 +1554,7 @@ function PortfolioList() {
   const scopeName = scopeAccounts.length === 1 ? scopeAccounts[0].name : picked.length ? `${scopeAccounts.length} cuentas` : "Todas las cuentas";
 
   const kpis = [
-    { label: "Valor de cartera", value: formatEUR(total), delta: formatPct(pc), trend: trend(pc), icon: <Briefcase className="h-4 w-4" />, colorIdx: 0, footnote: `${periodShort(period)} · invertido ${formatEUR0(cost)}`, pct: 100 },
+    { label: "Valor total", value: formatEUR(total + invCash), delta: formatPct(pc), trend: trend(pc), icon: <Briefcase className="h-4 w-4" />, colorIdx: 0, footnote: `productos + efectivo · ${periodShort(period)}`, pct: 100 },
     { label: "Ganancia latente", value: formatSigned(gain), delta: formatPct(gainPct), trend: trend(gain), icon: <TrendingUp className="h-4 w-4" />, colorIdx: 3, footnote: "desde la compra", pct: Math.min(100, Math.abs(gainPct) * 4) },
     { label: "TIR (XIRR)", value: formatPct(9.34), delta: "+1,8 pp", trend: "up" as const, icon: <Coins className="h-4 w-4" />, colorIdx: 4, footnote: "12 meses", pct: 58 },
     { label: "Aportación mensual", value: formatEUR(contrib12.avg), footnote: `media últimos 12 meses · ${formatEUR0(contrib12.total)} aportados`, icon: <Plus className="h-4 w-4" />, colorIdx: 1, pct: Math.min(100, (contrib12.avg / 1000) * 100) },
@@ -1572,6 +1590,23 @@ function PortfolioList() {
       </Panel>
 
       <KpiGroup items={kpis} />
+
+      {/* El valor total ya está en las tarjetas de arriba: aquí se abre en sus
+          dos mitades, lo invertido en productos y el efectivo que queda libre. */}
+      <Panel>
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { label: "En productos", value: formatEUR(total), color: "var(--text)", note: `${scope.length} productos · valor de mercado` },
+            { label: "Efectivo sin invertir", value: formatEUR(invCash), color: invCash < 0 ? "var(--neg)" : "var(--text)", note: "traspasos − compras + ventas" },
+          ].map((x) => (
+            <div key={x.label}>
+              <p className="pv-muted text-[10.5px] font-bold uppercase tracking-[0.12em]">{x.label}</p>
+              <p className="pv-num pv-display text-[20px] font-bold leading-tight" style={{ color: x.color }}>{x.value}</p>
+              <p className="pv-faint text-[10.5px]">{x.note}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
 
       <PanelGrid cols={scopeAccounts.length > 1 && !isMobile ? "grid-cols-1 xl:grid-cols-2" : "grid-cols-1"}>
         {scopeAccounts.map((acc) => {
