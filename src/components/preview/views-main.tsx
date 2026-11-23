@@ -782,7 +782,7 @@ function AccountsList() {
               title: a.name,
               sub:
                 a.kind === "inversion"
-                  ? `${productsValueOf(a.id, holdings) === 0 ? "0 productos" : `${formatEUR(productsValueOf(a.id, holdings))} en productos`} · ${formatEUR(cashOf(a, holdings, transactions))} sin invertir${archivedGroup ? " · archivada" : ""}`
+                  ? `${formatEUR(productsValueOf(a.id, holdings))} en productos · ${formatEUR(cashOf(a, holdings, transactions))} sin invertir${archivedGroup ? " · archivada" : ""}`
                   : archivedGroup ? `${KIND_LABEL[a.kind]} · archivada` : KIND_LABEL[a.kind],
               value: formatEUR(valueOf(a, holdings, transactions)),
               sub2: formatSigned(d),
