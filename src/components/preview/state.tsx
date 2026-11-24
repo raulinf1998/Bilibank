@@ -17,7 +17,7 @@ import {
 } from "@/lib/mock";
 import { defaultPeriod, setTodayReference } from "@/lib/series";
 import { removeTransaction } from "@/lib/ledger";
-import { cashOf, cashOperation, migrateInvestmentCash, operationCashDelta, operationConcept, operationSign } from "@/lib/cash";
+import { cashOf, cashOperation, migrateInvestmentCash, operationCashDelta, operationConcept, operationSign, syncInvestmentCash } from "@/lib/cash";
 import { shortDate, stablePrice, todayIso, withPrice } from "@/lib/market";
 import { demoteCategory as demoteInTree, moveItem, moveSubcategory as moveSubInTree, promoteSubcategory as promoteInTree, remapTransaction } from "@/lib/category-tree";
 import type { ArchetypeDef, DesignConfig, DonutKey } from "@/lib/themes";
@@ -169,19 +169,33 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   const [period, setPeriod] = useState<string>(() => defaultPeriod());
   const [toast, setToast] = useState<string | null>(null);
 
-  /* Las cuentas de inversión antiguas guardaban el valor total en `balance`:
-     al cargar se separa su efectivo (y sus compras ya pagadas) para que los
-     precios no muevan la caja. */
+  /* El efectivo de una cuenta de inversión es un valor derivado: dinero
+     inicial + suma de sus movimientos. Al cargar se fija el punto de partida
+     (`cashOpening`) de las cuentas antiguas en 0: todo su dinero ya está en los
+     movimientos, así que las compras que ya tenían anotadas restan de verdad. */
   const seedAccounts = initialData?.accounts?.length ? initialData.accounts : ACCOUNTS;
   const seedHoldings = initialData?.holdings?.length ? initialData.holdings : HOLDINGS;
-  const trimmed = useMemo(() => migrateInvestmentCash(seedAccounts, seedHoldings), [seedAccounts, seedHoldings]);
-  const [accounts, setAccounts] = useState<Account[]>(trimmed.accounts);
+  const seedTransactions = initialData?.transactions ? initialData.transactions : TRANSACTIONS;
+  const trimmed = useMemo(
+    () => migrateInvestmentCash(seedAccounts, seedHoldings, seedTransactions),
+    [seedAccounts, seedHoldings, seedTransactions],
+  );
+  const [rawAccounts, setAccounts] = useState<Account[]>(trimmed.accounts);
   const [categories, setCategories] = useState<Category[]>(initialData?.categories?.length ? initialData.categories : CATEGORIES);
   const [holdings, setHoldings] = useState<Holding[]>(trimmed.holdings);
-  const [transactions, setTransactions] = useState<Tx[]>(initialData?.transactions ? initialData.transactions : TRANSACTIONS);
+  const [transactions, setTransactions] = useState<Tx[]>(seedTransactions);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [sources, setSources] = useState<Record<string, boolean>>(DEFAULT_SOURCES);
+
+  /* El efectivo de una cuenta de inversión es dinero inicial + sus movimientos.
+     Se deriva aquí, en un único sitio, para que no pueda quedar desfasado:
+     cualquier movimiento (un traspaso, una compra, un gasto anotado) ya lo mueve
+     sin tocar la cuenta a mano. */
+  const accounts = useMemo(
+    () => syncInvestmentCash(rawAccounts, holdings, transactions),
+    [rawAccounts, holdings, transactions],
+  );
 
   const hydrated = useRef(false);
   useEffect(() => {
@@ -241,21 +255,31 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   const closeModal = useCallback(() => setStack((s) => s.slice(0, -1)), []);
   const closeAllModals = useCallback(() => setStack([]), []);
 
+  /**
+   * Ajusta el saldo de una cuenta **corriente** al registrar, mover o quitar el
+   * movimiento de una operación (`amount` con signo).
+   *
+   * En las cuentas de inversión no se toca nada: su efectivo es el dinero
+   * inicial más la suma de sus movimientos, así que al crear el movimiento ya
+   * queda descontado (ver `syncInvestmentCash`).
+   */
+  const settlePurchase = useCallback((accountId: number, amount: number) => {
+    setAccounts((list) =>
+      list.map((a) =>
+        a.id === accountId && a.kind === "corriente"
+          ? { ...a, balance: Math.round((a.balance + amount) * 100) / 100 }
+          : a,
+      ),
+    );
+  }, []);
+
   const addTransaction = useCallback(
     (tx: Omit<Tx, "id">) => {
       setTransactions((list) => sortTx([{ ...tx, id: Math.max(0, ...list.map((t) => t.id)) + 1 }, ...list]));
-      setAccounts((list) =>
-        list.map((a) => {
-          if (a.id !== tx.accountId) return a;
-          /* En una cuenta de inversión el efectivo es aparte del valor de los
-             productos: el movimiento mueve la caja, no el saldo total. */
-          if (a.kind === "inversion") return { ...a, cash: Math.round((cashOf(a, holdings) + tx.amount) * 100) / 100 };
-          return { ...a, balance: a.balance + tx.amount };
-        }),
-      );
+      settlePurchase(tx.accountId, tx.amount);
       flash(tx.amount >= 0 ? "Ingreso registrado" : "Gasto registrado");
     },
-    [holdings, flash],
+    [settlePurchase, flash],
   );
 
   const addTransfer = useCallback(
@@ -270,16 +294,13 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
           ...list,
         ]);
       });
-      /* El traspaso mueve efectivo: en las cuentas de inversión la caja, en las
-         corrientes el saldo. */
-      const move = (a: Account, delta: number): Account =>
-        a.kind === "inversion"
-          ? { ...a, cash: Math.round((cashOf(a, holdings) + delta) * 100) / 100 }
-          : { ...a, balance: Math.round((a.balance + delta) * 100) / 100 };
-      setAccounts((list) => list.map((a) => (a.id === from ? move(a, -amount) : a.id === to ? move(a, amount) : a)));
+      /* En las cuentas de inversión el traspaso ya mueve la caja al crearse el
+         movimiento; en las corrientes hay que mover el saldo. */
+      settlePurchase(from, -amount);
+      settlePurchase(to, amount);
       flash("Traspaso registrado");
     },
-    [accounts, holdings, flash],
+    [accounts, settlePurchase, flash],
   );
 
   const addAccount = useCallback(
@@ -346,29 +367,6 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
     ]);
     return { categoryId: id, subcategoryId: subId };
   }, [categories]);
-
-  /**
-   * Ajusta el efectivo de la cuenta al registrar o quitar el movimiento de una
-   * operación. `amount` va con signo: negativo si sale dinero (compra), positivo
-   * si entra (venta o dividendo).
-   *
-   * En las cuentas de inversión se toca `cash` (el saldo total es efectivo +
-   * productos y lo componen las vistas). En las corrientes el efectivo es el
-   * propio saldo.
-   */
-  const settlePurchase = useCallback(
-    (accountId: number, amount: number) => {
-      setAccounts((list) =>
-        list.map((a) => {
-          if (a.id !== accountId) return a;
-          if (a.kind === "inversion")
-            return { ...a, cash: Math.round((cashOf(a, holdings) + amount) * 100) / 100 };
-          return { ...a, balance: Math.round((a.balance + amount) * 100) / 100 };
-        }),
-      );
-    },
-    [holdings],
-  );
 
   /** Alta del movimiento (gasto o ingreso) asociado a una operación del producto. */
   const pushPurchaseMovement = useCallback(
@@ -682,20 +680,18 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       if (!old || old.categoryId === 0) return;
       setTransactions((list) => sortTx(list.map((t) => (t.id === id ? { ...next, id, operationId: old.operationId, productId: old.productId } : t))));
       if (!old.operationId) {
-        /* Mueve el efectivo: el importe sale de la cuenta anterior y entra en la nueva. */
-        setAccounts((list) =>
-          list.map((a) => {
-            const applied = (a.id === old.accountId ? -old.amount : 0) + (a.id === next.accountId ? next.amount : 0);
-            if (!applied) return a;
-            if (a.kind === "inversion")
-              return { ...a, cash: Math.round((cashOf(a, holdings) + applied) * 100) / 100 };
-            return { ...a, balance: Math.round((a.balance + applied) * 100) / 100 };
-          }),
-        );
+        /* El importe sale de la cuenta anterior y entra en la nueva. En las
+           cuentas de inversión basta con el cambio de movimientos. */
+        if (old.accountId !== next.accountId) {
+          settlePurchase(old.accountId, -old.amount);
+          settlePurchase(next.accountId, next.amount);
+        } else {
+          settlePurchase(next.accountId, next.amount - old.amount);
+        }
       }
       flash("Movimiento actualizado");
     },
-    [transactions, holdings, flash],
+    [transactions, settlePurchase, flash],
   );
 
   const updateTransfer = useCallback(
@@ -715,21 +711,23 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
           ...rest,
         ]);
       });
-      setAccounts((list) =>
-        list.map((a) => {
-          let delta = 0;
-          for (const l of legs) if (a.id === l.accountId) delta -= l.amount;
-          if (a.id === v.from) delta -= v.amount;
-          if (a.id === v.to) delta += v.amount;
-          if (!delta) return a;
-          if (a.kind === "inversion")
-            return { ...a, cash: Math.round((cashOf(a, holdings) + delta) * 100) / 100 };
+      /* Se revierte el traspaso anterior en las cuentas corrientes y se aplica
+         el nuevo; en las de inversión ya lo hacen los movimientos. */
+      setAccounts((list) => {
+        const deltas = new Map<number, number>();
+        const add = (id: number, value: number) => deltas.set(id, (deltas.get(id) ?? 0) + value);
+        for (const l of legs) add(l.accountId, -l.amount);
+        add(v.from, -v.amount);
+        add(v.to, v.amount);
+        return list.map((a) => {
+          const delta = deltas.get(a.id) ?? 0;
+          if (!delta || a.kind === "inversion") return a;
           return { ...a, balance: Math.round((a.balance + delta) * 100) / 100 };
-        }),
-      );
+        });
+      });
       flash("Traspaso actualizado");
     },
-    [transactions, accounts, holdings, flash],
+    [transactions, accounts, flash],
   );
 
   const updateAccount = useCallback(
@@ -911,7 +909,7 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
   }, [flash]);
 
   const resetData = useCallback(() => {
-    const trimmed = migrateInvestmentCash(ACCOUNTS, HOLDINGS);
+    const trimmed = migrateInvestmentCash(ACCOUNTS, HOLDINGS, TRANSACTIONS);
     setAccounts(trimmed.accounts);
     setCategories(CATEGORIES);
     setHoldings(trimmed.holdings);
@@ -941,7 +939,7 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
           countries: Array.isArray(h.countries) && h.countries.length ? h.countries : [["Sin clasificar", 100]],
         }));
         /* Copias antiguas: se separa el efectivo de las cuentas de inversión. */
-        const trimmed = migrateInvestmentCash(d.accounts as Account[], importedHoldings);
+        const trimmed = migrateInvestmentCash(d.accounts as Account[], importedHoldings, d.transactions as Tx[]);
         setAccounts(trimmed.accounts);
         setCategories(d.categories as Category[]);
         setHoldings(trimmed.holdings);

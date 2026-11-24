@@ -91,12 +91,12 @@ export function buildCsvFiles(data: ExportPayload): CsvFile[] {
     return [
       a.name,
       a.kind === "inversion" ? "Inversión" : "Corriente",
-      num(valueOf(a, holdings)),
+      num(valueOf(a, holdings, transactions)),
       num(a.initialBalance),
       a.archived ? "Sí" : "No",
       products.length,
       num(invested),
-      num(a.kind === "inversion" ? cashOf(a, holdings) : 0),
+      num(a.kind === "inversion" ? cashOf(a, holdings, transactions) : 0),
       own.length,
       own.length ? date(own[0].date) : "",
       own.length ? date(own[own.length - 1].date) : "",
@@ -233,7 +233,7 @@ export function buildCsvFiles(data: ExportPayload): CsvFile[] {
   /* ------------------------------ resumen ------------------------------ */
   const liquid = accounts.filter((a) => a.kind === "corriente").reduce((s, a) => s + a.balance, 0);
   const invested = holdings.reduce((s, h) => s + holdingValue(h), 0);
-  const investCash = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + cashOf(a, holdings), 0);
+  const investCash = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + cashOf(a, holdings, transactions), 0);
   const investedCost = holdings.reduce((s, h) => s + h.invested, 0);
   const income = transactions.filter((t) => !isTransfer(t) && t.amount > 0).reduce((s, t) => s + t.amount, 0);
   const expense = transactions.filter((t) => !isTransfer(t) && t.amount < 0).reduce((s, t) => s - t.amount, 0);

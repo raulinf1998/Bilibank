@@ -39,13 +39,18 @@ El resto de ficheros del ZIP se descartan, pero se aceptan sin problema.
   (`MyInvestor`), la cuenta de inversión se muestra como
   `MyInvestor · inversión` para no confundirlas.
 - **Cuentas de inversión.** El saldo de la cuenta es su **efectivo sin
-  invertir** (`CashBalances` de `portfolios.csv`, que ya viene descontadas las
-  compras) y los productos se suman aparte: el valor de la cuenta es
-  efectivo + productos. Su histórico sale de las aportaciones acumuladas.
-- **Compras ya pagadas.** Las operaciones de `investment_transactions.csv`
-  llegan marcadas como ya pagadas con ese efectivo, así que no se vuelven a
-  cobrar en la cuenta. Un producto nuevo que registres a mano sí descuenta su
-  compra del efectivo.
+  invertir** y los productos se suman aparte: el valor de la cuenta es
+  efectivo + productos. Ese efectivo se calcula con el **libro de movimientos**,
+  no con una cifra guardada: `dinero inicial + todos los movimientos de la
+  cuenta`. El dinero inicial de una cuenta importada es 0 (todo su histórico ya
+  está en los movimientos), así que un traspaso entra y una compra resta. La
+  ficha de la cuenta enseña el desglose (inicial · traspasos · compras, ventas y
+  dividendos) para que el número no parezca inventado.
+- **Compras ya pagadas.** Las operaciones de `investment_transactions.csv` se
+  importan como movimientos de la cuenta (`settled`), de modo que **sí restan**
+  del efectivo: son las que explican que una cartera antigua arranque con
+  efectivo 0. `CashBalances` de `portfolios.csv` no se usa porque la app deriva
+  el efectivo de los movimientos.
 - **Ventana temporal.** Al importar, la app ancla «hoy» al último movimiento
   del export (`setTodayReference`), de forma que los periodos (1M, 3M, 1A,
   «Todo») y las gráficas apuntan a tus fechas reales.

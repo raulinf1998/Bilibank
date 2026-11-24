@@ -3,7 +3,7 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeftRight, Briefcase, Building2, ChevronLeft, ChevronRight, Coins, Download, Landmark, Pencil, PiggyBank,
-  Plus, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, TrendingUp, Wallet,
+  Plus, ReceiptText, RefreshCw, Search, ShoppingCart, Trash2, TrendingUp, TriangleAlert, Wallet,
 } from "lucide-react";
 import { HOLDING_CATEGORIES, KIND_LABEL, PERIODS, SERIES, holdingValue, subColor, subIconKey, type Account, type Category, type Holding, type Operation, type Tx, periodOptions } from "@/lib/mock";
 import { CAT_ICON, iconNode } from "@/lib/icons";
@@ -43,8 +43,8 @@ function operationAmount(op: Operation): number {
  * Serie del saldo de una cuenta. En las cuentas de inversión se dibuja el valor
  * total (efectivo + productos), que es lo que suma en el patrimonio.
  */
-export function accountSeries(a: Account, holdings: Holding[] = []): number[] {
-  const end = a.kind === "inversion" ? valueOf(a, holdings) : a.balance;
+export function accountSeries(a: Account, holdings: Holding[] = [], transactions: Tx[] = []): number[] {
+  const end = a.kind === "inversion" ? valueOf(a, holdings, transactions) : a.balance;
   return expandSeries([...a.history.slice(0, -1), end], { spanDays: 335, seed: a.id });
 }
 
@@ -74,13 +74,13 @@ export function useSpending() {
 }
 
 export function useTotals() {
-  const { accounts, holdings } = usePreview();
+  const { accounts, holdings, transactions } = usePreview();
   return useMemo(() => {
     const liquid = accounts.filter((a) => a.kind === "corriente").reduce((s, a) => s + a.balance, 0);
     const invested = holdings.reduce((s, h) => s + holdingValue(h), 0);
     const investedCost = holdings.reduce((s, h) => s + h.invested, 0);
     /** Efectivo disponible dentro de las cuentas de inversión (su caja sin invertir) */
-    const investCash = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + cashOf(a, holdings), 0);
+    const investCash = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + cashOf(a, holdings, transactions), 0);
     const net = liquid + invested + investCash;
     const head = SERIES.slice(0, -1);
     const ratio = invested / Math.max(invested + investCash, 1);
@@ -91,7 +91,7 @@ export function useTotals() {
       invAll: expandSeries([...head.map((s) => s.inversion), invested + investCash], { spanDays: 335, seed: 5 }),
       liq: expandSeries([...head.map((s) => s.efectivo), liquid], { spanDays: 335, seed: 8 }),
     };
-  }, [accounts, holdings]);
+  }, [accounts, holdings, transactions]);
 }
 
 /** En «App bancaria» las cuentas se abren en una ventana; en el resto, en su propia página. */
@@ -445,7 +445,7 @@ export function PanelView() {
           colorIdx: a.colorIdx,
           title: a.name,
           sub: KIND_LABEL[a.kind],
-          value: formatEUR(valueOf(a, holdings)),
+          value: formatEUR(valueOf(a, holdings, transactions)),
           onClick: () => openAccount(a.id),
         }))}
       />
@@ -601,7 +601,7 @@ function cardSurface(v: CardKey, c: string): CSSProperties {
   }
 }
 
-function WalletCard({ a, index, onOpen, variant, holdings }: { a: Account; index: number; onOpen: (id: number) => void; variant: CardKey; holdings: Holding[] }) {
+function WalletCard({ a, index, onOpen, variant, holdings, transactions }: { a: Account; index: number; onOpen: (id: number) => void; variant: CardKey; holdings: Holding[]; transactions: Tx[] }) {
   const { cfg } = useArch();
   const col = chartColor(a.colorIdx);
   /** En los estilos translúcidos el fondo real es el de la página: el texto sigue al tema */
@@ -638,18 +638,31 @@ function WalletCard({ a, index, onOpen, variant, holdings }: { a: Account; index
           </span>
           <p className="truncate text-[15px] font-semibold tracking-tight">{a.name}</p>
         </div>
-        <p className="pv-num shrink-0 text-[19px] font-bold tracking-tight">{formatEUR(valueOf(a, holdings))}</p>
+        <p className="pv-num shrink-0 text-[19px] font-bold tracking-tight">{formatEUR(valueOf(a, holdings, transactions))}</p>
       </div>
-      <div className="relative mt-2.5 flex items-center justify-between">
-        <span className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]" style={{ background: chipBg }}>{KIND_LABEL[a.kind]}</span>
-        <span className="pv-num text-[11px] font-semibold" style={{ opacity: 0.85 }}>{a.kind === "inversion" ? "Inversión" : "Disponible"}</span>
-      </div>
+      {a.kind === "inversion" ? (
+        /* En una cuenta de inversión el valor es productos + efectivo: la
+           tarjeta abre el total en sus dos mitades. */
+        <div className="relative mt-2.5 flex items-center justify-between gap-2">
+          <span className="pv-num min-w-0 truncate text-[11.5px] font-semibold" style={{ opacity: 0.9 }}>
+            {formatEUR(productsValueOf(a.id, holdings))} en productos
+          </span>
+          <span className="pv-num min-w-0 truncate text-right text-[11.5px] font-semibold" style={{ opacity: 0.9 }}>
+            {formatEUR(cashOf(a, holdings, transactions))} sin invertir
+          </span>
+        </div>
+      ) : (
+        <div className="relative mt-2.5 flex items-center justify-between gap-2">
+          <span className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]" style={{ background: chipBg }}>{KIND_LABEL[a.kind]}</span>
+          <span className="pv-num text-[11px] font-semibold" style={{ opacity: 0.85 }}>Disponible</span>
+        </div>
+      )}
     </button>
   );
 }
 
 /** Pila de tarjetas a la izquierda y donut con el reparto a la derecha */
-function WalletLayout({ items, sum, onOpen, variant, holdings }: { items: Account[]; sum: number; onOpen: (id: number) => void; variant: CardKey; holdings: Holding[] }) {
+function WalletLayout({ items, sum, onOpen, variant, holdings, transactions }: { items: Account[]; sum: number; onOpen: (id: number) => void; variant: CardKey; holdings: Holding[]; transactions: Tx[] }) {
   const { arch, isMobile } = useArch();
   const cs = arch.chartStyle;
   if (items.length === 0) return <p className="pv-faint px-4 pb-6 text-center text-[12px]">Sin cuentas en esta sección.</p>;
@@ -665,11 +678,11 @@ function WalletLayout({ items, sum, onOpen, variant, holdings }: { items: Accoun
           </div>
         )}
         {items.map((a, i) => (
-          <WalletCard key={a.id} a={a} index={i} onOpen={onOpen} variant={variant} holdings={holdings} />
+          <WalletCard key={a.id} a={a} index={i} onOpen={onOpen} variant={variant} holdings={holdings} transactions={transactions} />
         ))}
       </div>
       <div className="flex flex-col items-center gap-4">
-        <Donut slices={items.map((a) => ({ id: a.id, name: a.name, value: Math.max(valueOf(a, holdings), 0.01), colorIdx: a.colorIdx }))} style={cs} size={isMobile ? 150 : 176} centerLabel="Total" centerValue={formatEUR0(sum)} onSliceClick={(id) => typeof id === "number" && onOpen(id)} />
+        <Donut slices={items.map((a) => ({ id: a.id, name: a.name, value: Math.max(valueOf(a, holdings, transactions), 0.01), colorIdx: a.colorIdx }))} style={cs} size={isMobile ? 150 : 176} centerLabel="Total" centerValue={formatEUR0(sum)} onSliceClick={(id) => typeof id === "number" && onOpen(id)} />
         <div className="w-full">
           {items.map((a) => (
             <button key={a.id} type="button" onClick={() => onOpen(a.id)} className="pv-hit flex w-full items-center justify-between gap-3 px-2 py-1.5 text-left" style={{ borderRadius: 8 }}>
@@ -677,7 +690,7 @@ function WalletLayout({ items, sum, onOpen, variant, holdings }: { items: Accoun
                 <span className="h-2.5 w-2.5 shrink-0" style={{ background: chartColor(a.colorIdx), borderRadius: 999 }} />
                 <span className="truncate text-[12px]" style={{ color: "var(--text)" }}>{a.name}</span>
               </span>
-              <span className="pv-num shrink-0 text-[11.5px] font-semibold" style={{ color: "var(--muted)" }}>{((valueOf(a, holdings) / Math.max(sum, 1)) * 100).toFixed(0)} %</span>
+              <span className="pv-num shrink-0 text-[11.5px] font-semibold" style={{ color: "var(--muted)" }}>{((valueOf(a, holdings, transactions) / Math.max(sum, 1)) * 100).toFixed(0)} %</span>
             </button>
           ))}
         </div>
@@ -714,11 +727,11 @@ function CardStylePicker({ value, onChange }: { value: CardKey; onChange: (v: Ca
 
 function AccountsList() {
   const { arch, isMobile, cfg, patchConfig } = useArch();
-  const { accounts, holdings, openModal, period, setPeriod } = usePreview();
+  const { accounts, holdings, transactions, openModal, period, setPeriod } = usePreview();
   const openAccount = useOpenAccount();
   const series = useMemo(
-    () => Object.fromEntries(accounts.map((a) => [a.id, accountSeries(a, holdings)])) as Record<number, number[]>,
-    [accounts, holdings],
+    () => Object.fromEntries(accounts.map((a) => [a.id, accountSeries(a, holdings, transactions)])) as Record<number, number[]>,
+    [accounts, holdings, transactions],
   );
   const win = (a: Account) => windowSeries(series[a.id], period);
   const delta = (a: Account) => {
@@ -734,7 +747,7 @@ function AccountsList() {
   const invest = active.filter((a) => a.kind === "inversion");
   const totalCurrent = accounts.filter((a) => a.kind === "corriente").reduce((s, a) => s + a.balance, 0);
   /* En las cuentas de inversión el saldo es efectivo; su valor suma productos. */
-  const totalInvest = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + valueOf(a, holdings), 0);
+  const totalInvest = accounts.filter((a) => a.kind === "inversion").reduce((s, a) => s + valueOf(a, holdings, transactions), 0);
   const total = totalCurrent + totalInvest;
   const totalDelta = accounts.reduce((s, a) => s + delta(a), 0);
   const cs = arch.chartStyle;
@@ -757,7 +770,7 @@ function AccountsList() {
         <SectionTitle sub={`${items.length} cuentas · ${formatEUR(sum)}`}>{title}</SectionTitle>
       </div>
       {cards && !isMobile ? (
-        <WalletLayout items={items} sum={sum} onOpen={openAccount} variant={cardStyle} holdings={holdings} />
+        <WalletLayout items={items} sum={sum} onOpen={openAccount} variant={cardStyle} holdings={holdings} transactions={transactions} />
       ) : (
         <RowList
           items={items.map((a) => {
@@ -767,8 +780,11 @@ function AccountsList() {
               icon: a.kind === "inversion" ? <Briefcase className="h-4 w-4" /> : a.name === "Efectivo" ? <Coins className="h-4 w-4" /> : <Landmark className="h-4 w-4" />,
               colorIdx: a.colorIdx,
               title: a.name,
-              sub: archivedGroup ? `${KIND_LABEL[a.kind]} · archivada` : KIND_LABEL[a.kind],
-              value: formatEUR(valueOf(a, holdings)),
+              sub:
+                a.kind === "inversion"
+                  ? `${formatEUR(productsValueOf(a.id, holdings))} en productos · ${formatEUR(cashOf(a, holdings, transactions))} sin invertir${archivedGroup ? " · archivada" : ""}`
+                  : archivedGroup ? `${KIND_LABEL[a.kind]} · archivada` : KIND_LABEL[a.kind],
+              value: formatEUR(valueOf(a, holdings, transactions)),
               sub2: formatSigned(d),
               sub2Tone: (d >= 0 ? "pos" : "neg") as "pos" | "neg",
               extra: !isMobile && arch.list !== "dense" ? <Sparkline values={win(a)} positive={d >= 0} style={cs} width={70} height={24} /> : undefined,
@@ -797,7 +813,7 @@ function AccountsList() {
       </PanelGrid>
       {archived.length > 0 && (
         <div className="mt-4">
-          {group("Archivadas", archived, archived.reduce((s, a) => s + valueOf(a, holdings), 0), true)}
+          {group("Archivadas", archived, archived.reduce((s, a) => s + valueOf(a, holdings, transactions), 0), true)}
         </div>
       )}
     </Stack>
@@ -822,7 +838,7 @@ function AccountDetail({ id }: { id: number }) {
 function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedded?: boolean }) {
   const { arch, isMobile } = useArch();
   const { accounts, holdings, transactions, categories, back, openModal, period } = usePreview();
-  const full = useMemo(() => accountSeries(acc, holdings), [acc, holdings]);
+  const full = useMemo(() => accountSeries(acc, holdings, transactions), [acc, holdings, transactions]);
   const all = transactions.filter((t) => t.accountId === acc.id);
   const txs = all.filter((t) => inPeriod(t.date, period));
   const win = windowSeries(full, period);
@@ -901,7 +917,7 @@ function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedde
 function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embedded?: boolean }) {
   const { arch, isMobile } = useArch();
   const { accounts, holdings, transactions, categories, back, openModal, go, period } = usePreview();
-  const full = useMemo(() => accountSeries(acc, holdings), [acc, holdings]);
+  const full = useMemo(() => accountSeries(acc, holdings, transactions), [acc, holdings, transactions]);
   const all = transactions.filter((t) => t.accountId === acc.id);
   const txs = all.filter((t) => inPeriod(t.date, period));
   const win = windowSeries(full, period);
@@ -912,15 +928,19 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
   const investedCost = prods.reduce((s, h) => s + h.invested, 0);
   const gain = productsValue - investedCost;
   const gainPct = investedCost > 0 ? (gain / investedCost) * 100 : 0;
-  /* El efectivo es la caja real de la cuenta: el dinero aportado que aún no se
-     ha invertido. Las compras ya lo han descontado y los traspasos lo suman. */
-  const cash = cashOf(acc, holdings);
+  /* El efectivo es la caja real de la cuenta: su dinero inicial más todo lo que
+     ha entrado y salido (traspasos, compras, ventas y dividendos). */
+  const cash = cashOf(acc, holdings, transactions);
   const total = productsValue + cash;
   const investedPct = total > 0 ? (productsValue / total) * 100 : 0;
-  /* Dinero que ha entrado en la cuenta y sigue dentro (invertido al coste + caja). */
-  const contributed = investedCost + cash;
-  const funding = txs.filter((t) => t.categoryId === 0);
+  const opening = typeof acc.cashOpening === "number" ? acc.cashOpening : 0;
+  /* Traspasos que han entrado o salido de la cuenta (en todo el histórico). */
+  const funding = all.filter((t) => t.categoryId === 0);
   const fundingNet = funding.reduce((s, t) => s + t.amount, 0);
+  /* Compras, ventas y dividendos anotados en la cuenta. */
+  const opsNet = all.filter((t) => t.categoryId !== 0).reduce((s, t) => s + t.amount, 0);
+  const fundingCount = funding.length;
+  const opsCount = all.length - fundingCount;
 
   /* Todas las operaciones de los productos de esta cuenta, de la más reciente a
      la más antigua (la tabla enseña las últimas y el subtítulo dice cuántas caen
@@ -946,7 +966,14 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
   const kpis = [
     { label: "Valor total", value: formatEUR(total), delta: formatPct(changePct(win)), trend: trend(changePct(win)), icon: <Briefcase className="h-4 w-4" />, colorIdx: acc.colorIdx, footnote: `productos + efectivo · ${periodShort(period)}`, pct: 100 },
     { label: "En productos", value: formatEUR(productsValue), footnote: `${prods.length} productos · ${investedPct.toFixed(0)} % invertido`, icon: <TrendingUp className="h-4 w-4" />, colorIdx: 1, pct: investedPct },
-    { label: "Efectivo sin invertir", value: formatEUR(cash), footnote: `aportado ${formatEUR(contributed)} · ${formatEUR(investedCost)} invertido`, icon: <Wallet className="h-4 w-4" />, colorIdx: 4, pct: 100 - investedPct },
+    {
+      label: "Efectivo sin invertir",
+      value: formatEUR(cash),
+      footnote: `${formatEUR(opening)} de partida`,
+      icon: <Wallet className="h-4 w-4" />,
+      colorIdx: 4,
+      pct: 100 - investedPct,
+    },
     { label: "Ganancia latente", value: formatSigned(gain), delta: formatPct(gainPct), trend: trend(gain), icon: <PiggyBank className="h-4 w-4" />, colorIdx: 3, footnote: `invertido ${formatEUR0(investedCost)}`, pct: Math.min(100, Math.abs(gainPct) * 4) },
   ];
 
@@ -964,6 +991,27 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
       {embedded ? <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div> : <PageHeader onBack={back} kicker={`Cuenta de inversión · ${prods.length} productos`} title={acc.name} action={actions} />}
       <PeriodBar />
       <KpiGroup items={kpis} />
+      {/* El efectivo de una cuenta de inversión se explica solo: con qué dinero
+          arrancó y qué han hecho sus movimientos (las tarjetas no caben más). */}
+      <p className="mx-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11.5px]" style={{ color: "var(--muted)" }}>
+        <Wallet className="h-3.5 w-3.5 shrink-0" />
+        <span>
+          Efectivo sin invertir = <b style={{ color: "var(--text)" }}>{formatEUR(opening)}</b> de dinero inicial
+          {" · "}
+          <b style={{ color: "var(--text)" }}>{formatSigned(fundingNet)}</b> en {fundingCount === 1 ? "1 traspaso" : `${fundingCount} traspasos`}
+          {" · "}
+          <b style={{ color: "var(--text)" }}>{formatSigned(opsNet)}</b> en {opsCount === 1 ? "1 compra, venta o dividendo" : `${opsCount} compras, ventas y dividendos`}.
+        </span>
+      </p>
+      {cash < 0 && (
+        <p className="mx-1 flex items-start gap-2 text-[12px] leading-snug" style={{ color: "var(--accent)" }}>
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            En esta cuenta hay {formatEUR(Math.abs(cash))} gastados de más: las compras superan a los traspasos recibidos.
+            Añade el traspaso que falta y el efectivo se corrige solo.
+          </span>
+        </p>
+      )}
       <PanelGrid cols="grid-cols-1 xl:grid-cols-3">
         <Panel span="xl:col-span-2">
           <SectionTitle sub={`${formatPct(changePct(win))} · ${periodLabel(period)}`}>Evolución del valor</SectionTitle>
@@ -1352,7 +1400,7 @@ function countryColor(name: string, entries: MapEntry[]): ColorRef {
 
 function PortfolioList() {
   const { arch, isMobile } = useArch();
-  const { holdings, accounts, go, openModal, period, setPeriod, refreshPrices } = usePreview();
+  const { holdings, accounts, transactions, go, openModal, period, setPeriod, refreshPrices } = usePreview();
   const openAccount = useOpenAccount();
   const t = useTotals();
   const cs = arch.chartStyle;
@@ -1386,6 +1434,8 @@ function PortfolioList() {
   const cost = scope.reduce((sum, h) => sum + h.invested, 0);
   const gain = total - cost;
   const gainPct = cost > 0 ? (gain / cost) * 100 : 0;
+  /* Efectivo sin invertir de las cuentas que se están viendo. */
+  const invCash = scopeAccounts.reduce((sum, a) => sum + cashOf(a, holdings, transactions), 0);
 
   /** Productos que se dibujan en la evolución (según el selector) */
   const chartProducts = selProducts ? scope.filter((h) => selProducts.includes(h.id)) : scope;
@@ -1504,7 +1554,7 @@ function PortfolioList() {
   const scopeName = scopeAccounts.length === 1 ? scopeAccounts[0].name : picked.length ? `${scopeAccounts.length} cuentas` : "Todas las cuentas";
 
   const kpis = [
-    { label: "Valor de cartera", value: formatEUR(total), delta: formatPct(pc), trend: trend(pc), icon: <Briefcase className="h-4 w-4" />, colorIdx: 0, footnote: `${periodShort(period)} · invertido ${formatEUR0(cost)}`, pct: 100 },
+    { label: "Valor total", value: formatEUR(total + invCash), delta: formatPct(pc), trend: trend(pc), icon: <Briefcase className="h-4 w-4" />, colorIdx: 0, footnote: `productos + efectivo · ${periodShort(period)}`, pct: 100 },
     { label: "Ganancia latente", value: formatSigned(gain), delta: formatPct(gainPct), trend: trend(gain), icon: <TrendingUp className="h-4 w-4" />, colorIdx: 3, footnote: "desde la compra", pct: Math.min(100, Math.abs(gainPct) * 4) },
     { label: "TIR (XIRR)", value: formatPct(9.34), delta: "+1,8 pp", trend: "up" as const, icon: <Coins className="h-4 w-4" />, colorIdx: 4, footnote: "12 meses", pct: 58 },
     { label: "Aportación mensual", value: formatEUR(contrib12.avg), footnote: `media últimos 12 meses · ${formatEUR0(contrib12.total)} aportados`, icon: <Plus className="h-4 w-4" />, colorIdx: 1, pct: Math.min(100, (contrib12.avg / 1000) * 100) },
@@ -1541,6 +1591,23 @@ function PortfolioList() {
 
       <KpiGroup items={kpis} />
 
+      {/* El valor total ya está en las tarjetas de arriba: aquí se abre en sus
+          dos mitades, lo invertido en productos y el efectivo que queda libre. */}
+      <Panel>
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { label: "En productos", value: formatEUR(total), color: "var(--text)", note: `${scope.length} productos · valor de mercado` },
+            { label: "Efectivo sin invertir", value: formatEUR(invCash), color: invCash < 0 ? "var(--neg)" : "var(--text)", note: "traspasos − compras + ventas" },
+          ].map((x) => (
+            <div key={x.label}>
+              <p className="pv-muted text-[10.5px] font-bold uppercase tracking-[0.12em]">{x.label}</p>
+              <p className="pv-num pv-display text-[20px] font-bold leading-tight" style={{ color: x.color }}>{x.value}</p>
+              <p className="pv-faint text-[10.5px]">{x.note}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
       <PanelGrid cols={scopeAccounts.length > 1 && !isMobile ? "grid-cols-1 xl:grid-cols-2" : "grid-cols-1"}>
         {scopeAccounts.map((acc) => {
           const items = scope.filter((h) => h.accountId === acc.id);
@@ -1559,7 +1626,7 @@ function PortfolioList() {
                     <p className="pv-faint text-[11px]">
                       {items.length} {items.length === 1 ? "producto" : "productos"} · {formatEUR(v)}
                       {total > 0 ? ` · ${((v / total) * 100).toFixed(0)} % de la cartera` : ""}
-                      {` · ${formatEUR(cashOf(acc, holdings))} sin invertir`}
+                      {` · ${formatEUR(cashOf(acc, holdings, transactions))} sin invertir`}
                     </p>
                   </div>
                 </div>
