@@ -156,6 +156,71 @@ export const cashOperation = (op: Op): boolean =>
 /** ¿Mete dinero en la cuenta (venta o dividendo)? */
 export const isCreditOperation = (op: Op): boolean => operationSign(op) === 1;
 
+/**
+ * Operaciones de un producto que aún no tienen su movimiento en la cuenta.
+ *
+ * Misma regla que `cashOperation` salvo el filtro `settled`: que una operación
+ * viniera del banco marcada como ya pagada no significa que su gasto esté
+ * apuntado en Bilibank, y el usuario puede querer registrarlo. Si ya existe un
+ * movimiento enlazado, no se repite.
+ */
+export function missingExpenseOperations(holding: Holding, transactions: Tx[]): Operation[] {
+  const linked = new Set(
+    transactions.filter((t) => t.productId === holding.id).map((t) => t.operationId),
+  );
+  return holding.operations.filter(
+    (op) =>
+      !linked.has(op.id) &&
+      Boolean(op.date) &&
+      operationAmount(op) > 0.004 &&
+      (op.type === "compra" || op.type === "aportacion" ? op.units > 0 : true),
+  );
+}
+
+/**
+ * Importe que costó una compra **en el momento de comprarla**: participaciones
+ * × precio de entonces + comisiones. No es el valor actual del producto.
+ *
+ * Es la cifra que se anota como gasto en la cuenta cuando se pone al día el
+ * efectivo: lo que salió de tu bolsillo aquel día.
+ */
+export function purchaseCost(op: Op): number {
+  return round2(op.units * op.price + op.fees);
+}
+
+/** Una compra que todavía no tiene su gasto anotado en el efectivo. */
+export type PendingPurchase = { holding: Holding; op: Operation; cost: number };
+
+/**
+ * Compras de los productos de una cuenta que aún no están anotadas como gasto
+ * en su efectivo, de la más antigua a la más reciente.
+ *
+ * Se considera «anotada» la compra que ya tiene un movimiento enlazado
+ * (`productId` + `operationId`); así el botón nunca duplica. Sí se incluyen las
+ * compras que el importe venía marcado como ya pagado (`settled`): ese dinero
+ * salió de la cuenta igual y el usuario decide cuándo apuntarlo.
+ *
+ * El importe es `purchaseCost`: lo que costó ese día, no el valor actual.
+ */
+export function pendingPurchaseExpenses(
+  accountId: number,
+  holdings: Holding[],
+  transactions: Tx[],
+): PendingPurchase[] {
+  const linked = new Set(
+    transactions.filter((t) => t.productId !== undefined).map((t) => `${t.productId}:${t.operationId}`),
+  );
+  return holdings
+    .filter((h) => h.accountId === accountId)
+    .flatMap((holding) => holding.operations.map((op) => ({ holding, op })))
+    .filter(({ holding, op }) => op.type === "compra" && !linked.has(`${holding.id}:${op.id}`))
+    .map(({ holding, op }) => ({ holding, op, cost: purchaseCost(op) }))
+    .filter((row) => row.cost > 0.004)
+    .sort((a, b) =>
+      a.op.date === b.op.date ? a.op.id - b.op.id : a.op.date < b.op.date ? -1 : 1,
+    );
+}
+
 /** Concepto del movimiento que genera una operación. */
 export function operationConcept(op: Op, productName: string): string {
   if (op.type === "venta") return `Venta ${productName}`;

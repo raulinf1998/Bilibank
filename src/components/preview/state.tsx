@@ -17,7 +17,8 @@ import {
 } from "@/lib/mock";
 import { defaultPeriod, setTodayReference } from "@/lib/series";
 import { removeTransaction } from "@/lib/ledger";
-import { cashOf, cashOperation, migrateInvestmentCash, operationCashDelta, operationConcept, operationSign, syncInvestmentCash } from "@/lib/cash";
+import { cashOf, cashOperation, migrateInvestmentCash, missingExpenseOperations, operationCashDelta, operationConcept, operationSign, pendingPurchaseExpenses, syncInvestmentCash } from "@/lib/cash";
+import { formatEUR } from "@/lib/format";
 import { shortDate, stablePrice, todayIso, withPrice } from "@/lib/market";
 import { demoteCategory as demoteInTree, moveItem, moveSubcategory as moveSubInTree, promoteSubcategory as promoteInTree, remapTransaction } from "@/lib/category-tree";
 import type { ArchetypeDef, DesignConfig, DonutKey } from "@/lib/themes";
@@ -56,6 +57,7 @@ export type ModalKind =
   | { kind: "exportCsv" }
   | { kind: "notifications" }
   | { kind: "confirmClear" }
+  | { kind: "confirmPurchases"; accountId: number }
   | { kind: "organizeCategories"; categoryId?: number };
 
 const DEFAULT_SOURCES: Record<string, boolean> = { "Yahoo Finance": true, CoinGecko: true, "Alpha Vantage": false, Morningstar: true };
@@ -133,6 +135,13 @@ interface PreviewState {
    * Devuelve cuántos movimientos ha creado.
    */
   syncProductExpenses: (productId: number) => number;
+  /**
+   * Anota como gasto del efectivo de una cuenta de inversión **cada compra de
+   * sus productos que aún no lo esté**, con la fecha de la compra y el importe
+   * que costó ese día (participaciones × precio + comisiones), no el valor
+   * actual. Devuelve cuántos movimientos ha creado.
+   */
+  loadPurchaseExpenses: (accountId: number) => number;
   deleteTransaction: (id: number) => void;
   /** Borra la cuenta y sus movimientos; los productos deben moverse antes. */
   deleteAccount: (id: number) => boolean;
@@ -592,9 +601,7 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
     (productId: number) => {
       const product = holdings.find((h) => h.id === productId);
       if (!product) return 0;
-      const linked = transactions.filter((t) => t.productId === productId);
-      const done = new Set(linked.map((t) => t.operationId));
-      const missing = product.operations.filter((op) => !done.has(op.id) && cashOperation(op));
+      const missing = missingExpenseOperations(product, transactions);
       if (!missing.length) {
         flash("Todas las operaciones de este producto ya están anotadas en la cuenta");
         return 0;
@@ -634,6 +641,50 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       return missing.length;
     },
     [holdings, transactions, investmentCategory, settlePurchase, flash],
+  );
+
+  /**
+   * Pone al día el efectivo de una cuenta de inversión: recorre las compras de
+   * todos sus productos y anota las que todavía no tienen su gasto.
+   *
+   * - La fecha es la de la compra y el importe, lo que costó entonces
+   *   (`purchaseCost`), no lo que vale hoy.
+   * - No duplica nada: cada movimiento se enlaza con su operación
+   *   (`productId` + `operationId`) y las ya anotadas se saltan. Así el botón
+   *   se puede pulsar tantas veces como haga falta.
+   */
+  const loadPurchaseExpenses = useCallback(
+    (accountId: number) => {
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account || account.kind !== "inversion") return 0;
+      const pending = pendingPurchaseExpenses(accountId, holdings, transactions);
+      if (!pending.length) {
+        flash("Este efectivo ya tiene anotadas todas las compras de sus productos");
+        return 0;
+      }
+      const { categoryId, subcategoryId } = investmentCategory();
+      const rows: Omit<Tx, "id">[] = pending.map(({ holding, op, cost }) => ({
+        date: op.date,
+        concept: operationConcept(op, holding.nickname || holding.ticker),
+        categoryId,
+        subcategoryId,
+        accountId,
+        amount: -cost,
+        note: `${op.units} × ${op.price} €${op.fees ? ` · ${op.fees} € de comisiones` : ""} · lo que costó ese día`,
+        productId: holding.id,
+        operationId: op.id,
+      }));
+      setTransactions((list) => {
+        let id = Math.max(0, ...list.map((t) => t.id));
+        return sortTx([...rows.map((row) => ({ ...row, id: ++id })), ...list]);
+      });
+      const total = rows.reduce((sum, r) => sum + r.amount, 0);
+      flash(
+        `${rows.length} ${rows.length === 1 ? "compra anotada" : "compras anotadas"} en el efectivo · ${formatEUR(Math.abs(total))}`,
+      );
+      return rows.length;
+    },
+    [accounts, holdings, transactions, investmentCategory, flash],
   );
 
   const addCategory = useCallback(
@@ -1003,10 +1054,10 @@ export function PreviewDataProvider({ children, initialRoute, initialModal, init
       route, go, back, modal, openModal, closeModal, closeAllModals, period, setPeriod, toast, flash, saveState, lastSavedAt,
       accounts, categories, holdings, transactions, sources, toggleSource,
       addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory,
-      updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, syncProductExpenses,
+      updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, syncProductExpenses, loadPurchaseExpenses,
       deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices,
     }),
-    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, syncProductExpenses, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
+    [route, go, back, modal, openModal, closeModal, closeAllModals, period, toast, flash, saveState, lastSavedAt, accounts, categories, holdings, transactions, sources, toggleSource, addTransaction, addTransfer, addAccount, addHolding, addOperation, addCategory, addSubcategory, reorderCategory, reorderSubcategory, promoteSubcategory, demoteCategory, moveSubcategory, updateTransaction, updateTransfer, updateAccount, updateCategory, updateSubcategory, updateHolding, updateOperation, deleteOperation, deleteHolding, syncProductExpenses, loadPurchaseExpenses, deleteTransaction, deleteAccount, setAccountArchived, clearTransactions, resetData, exportData, importData, refreshPrices],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

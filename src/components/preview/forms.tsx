@@ -15,7 +15,7 @@ import { breakdownTotal, isPlaceholderBreakdown, normalizeBreakdown, todayIso } 
 import { buildCsvFiles, buildCsvZip, downloadBytes, downloadCsv, downloadCsvZip, downloadText } from "@/lib/csv-export";
 import { buildBackupBundle, buildBackupJson, buildReadableHtml } from "@/lib/backup";
 import { isTransfer, transferEndpoints } from "@/lib/ledger";
-import { cashOf, valueOf } from "@/lib/cash";
+import { cashOf, pendingPurchaseExpenses, valueOf } from "@/lib/cash";
 import { formatEUR, formatEUR0, formatFullDate, formatNum, formatSigned } from "@/lib/format";
 import { Btn, ColorPicker, Field, IconBadge, IconPicker, Input, Modal, RowList, Segmented, Select } from "./primitives";
 import { DateField } from "./datefield";
@@ -72,6 +72,8 @@ export function ModalHost() {
       return <NotificationsModal onClose={closeModal} />;
     case "confirmClear":
       return <ConfirmClearModal onClose={closeModal} />;
+    case "confirmPurchases":
+      return <ConfirmPurchasesModal key={`purch-${modal.accountId}`} accountId={modal.accountId} onClose={closeModal} />;
     case "organizeCategories":
       return <OrganizeCategoriesModal categoryId={modal.categoryId} onClose={closeModal} />;
     default:
@@ -1116,6 +1118,110 @@ function ConfirmClearModal({ onClose }: { onClose: () => void }) {
           Se eliminarán los <b>{transactions.length}</b> movimientos de la demo. Las cuentas, productos y categorías se conservan. Puedes volver al estado inicial desde <i>Ajustes › Restablecer datos de ejemplo</i>.
         </p>
       </div>
+    </Modal>
+  );
+}
+
+/**
+ * Confirmación antes de anotar en el efectivo el gasto de cada compra.
+ *
+ * Enseña por adelantado cuántas compras faltan, cuánto suman y con qué se
+ * quedaría el efectivo, para que no haya sorpresas: las compras antiguas
+ * pueden dejar el efectivo en negativo (no había traspasos registrados).
+ */
+function ConfirmPurchasesModal({ accountId, onClose }: { accountId: number; onClose: () => void }) {
+  const { accounts, holdings, transactions, loadPurchaseExpenses } = usePreview();
+  const acc = accounts.find((a) => a.id === accountId);
+  const prods = holdings.filter((h) => h.accountId === accountId);
+  const pending = pendingPurchaseExpenses(accountId, holdings, transactions);
+  if (!acc) return null;
+  const total = pending.reduce((sum, row) => sum + row.cost, 0);
+  const cash = cashOf(acc, holdings, transactions);
+  const after = Math.round((cash - total) * 100) / 100;
+  const first = pending[0]?.op.date;
+  const last = pending[pending.length - 1]?.op.date;
+  const empty = pending.length === 0;
+
+  return (
+    <Modal
+      title={empty ? "Compras ya anotadas" : "Anotar las compras en el efectivo"}
+      onClose={onClose}
+      width={520}
+      footer={
+        <>
+          <Btn variant="ghost" onClick={onClose}>{empty ? "Cerrar" : "Cancelar"}</Btn>
+          {!empty && (
+            <Btn icon={<Download className="h-3.5 w-3.5" />} onClick={() => { loadPurchaseExpenses(accountId); onClose(); }}>
+              Anotar {pending.length} {pending.length === 1 ? "gasto" : "gastos"}
+            </Btn>
+          )}
+        </>
+      }
+    >
+      <div className="flex items-start gap-3">
+        <IconBadge icon={<Briefcase className="h-4 w-4" />} colorIdx={acc.colorIdx} size={36} />
+        <div className="min-w-0 space-y-2">
+          {empty ? (
+            <p className="text-[13px] leading-relaxed" style={{ color: "var(--text)" }}>
+              Todas las compras de los productos de <b>{acc.name}</b> ya tienen su gasto apuntado. No hay nada que añadir.
+            </p>
+          ) : (
+            <>
+              <p className="text-[13px] leading-relaxed" style={{ color: "var(--text)" }}>
+                Se anotarán <b>{pending.length}</b> {pending.length === 1 ? "gasto" : "gastos"} en el efectivo de <b>{acc.name}</b>,
+                uno por cada compra de sus {prods.length === 1 ? "producto" : `${prods.length} productos`} que aún no lo tiene.
+              </p>
+              <p className="pv-faint text-[12px] leading-relaxed">
+                Cada gasto lleva la fecha de su compra y el importe que costó ese día (participaciones × precio + comisiones),
+                no lo que vale ahora. Las compras ya anotadas se saltan, así que puedes pulsar las veces que quieras.
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+
+      {!empty && (
+        <>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: "Compras", value: String(pending.length) },
+              { label: "Total gastado", value: formatEUR(total) },
+              { label: "Efectivo después", value: formatEUR(after) },
+            ].map((cell) => (
+              <div key={cell.label} style={{ padding: 10, borderRadius: "var(--radius)", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                <div className="pv-faint text-[10.5px] font-semibold uppercase tracking-wide">{cell.label}</div>
+                <div className="mt-0.5 text-[13.5px] font-bold tabular-nums" style={{ color: "var(--text)" }}>{cell.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
+            <div className="pv-faint flex items-center justify-between px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide" style={{ background: "var(--surface-2)" }}>
+              <span>Compras que se van a anotar{first && last ? ` · ${first.split("-").reverse().join("/")} → ${last.split("-").reverse().join("/")}` : ""}</span>
+              <span>{formatEUR(total)}</span>
+            </div>
+            <div className="max-h-[220px] overflow-y-auto">
+              {pending.map(({ holding, op, cost }, i) => (
+                <div key={`${holding.id}-${op.id}`} className="flex items-center gap-3 px-3 py-2" style={{ borderTop: i ? "1px solid var(--border)" : undefined }}>
+                  <span className="pv-faint w-[62px] shrink-0 text-[11px] tabular-nums">{op.date.split("-").reverse().join("/")}</span>
+                  <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text)" }}>{holding.nickname || holding.ticker}</span>
+                  <span className="shrink-0 text-[12px] font-semibold tabular-nums" style={{ color: "var(--text)" }}>{formatEUR(cost)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {after < 0 && (
+            <div className="flex items-start gap-2" style={{ padding: 10, borderRadius: "var(--radius)", background: "var(--warning-soft, rgba(245,158,11,.12))" }}>
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: "var(--warning, #b45309)" }} />
+              <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text)" }}>
+                El efectivo quedaría en <b>{formatEUR(after)}</b>. Es normal si aún no has apuntado los traspasos que
+                metiste en esta cuenta: el efectivo es el dinero inicial más los movimientos, y aquí solo hay compras.
+              </p>
+            </div>
+          )}
+        </>
+      )}
     </Modal>
   );
 }
