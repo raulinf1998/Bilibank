@@ -155,6 +155,8 @@ server {
 | La página carga el laboratorio | La aplicación es `/app` (con barra final opcional). |
 | El puerto 3000 está ocupado | Cambia `APP_PORT` en `.env` y ejecuta `docker compose up -d`. |
 | Quiero empezar de cero | Copia una backup y restablece los datos de ejemplo desde Ajustes; no borres el volumen sin copia. |
+| `no space left on device` al compilar (`COPY --from=deps ... node_modules`) | El disco del contenedor se quedó sin sitio mientras Docker copiaba dependencias. El `Dockerfile` ya no hace esa copia; limpia los restos con `docker builder prune -af && docker image prune -af`, comprueba `df -h` y repite `docker compose up -d --build`. Detalle en `deploy/INSTALACION.md`. |
+| El build necesita más disco del previsto | Da al LXC **5 GB o más** (`pct set 210 --rootfs local-lvm:10`) y deja ~4 GB libres antes de construir. |
 
 ## 8. Desarrollo local (opcional)
 

@@ -1,8 +1,17 @@
 # syntax=docker/dockerfile:1
 
-# ---- Dependencias ----
-FROM node:22-bookworm-slim AS deps
+# ---- Compilación ----
+# Una sola etapa instala las dependencias (las de desarrollo también hacen
+# falta para compilar: tailwind, postcss, typescript…). Antes había una etapa
+# `deps` cuyo `node_modules` (~700 MB) se copiaba entera al builder: esa copia
+# es la que agotaba el disco del servidor («no space left on device»).
+# El servidor final no necesita nada de aquí fuera de lo que Next copia en
+# `.next/standalone`.
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+# Valor sólo para compilar: no se conecta a ninguna base durante el build.
+ENV DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build
 # package-lock.json es recomendable, pero el ZIP descargado desde GitHub puede
 # no incluirlo. El comodín permite construir en ambos casos.
 COPY package*.json ./
@@ -11,19 +20,14 @@ RUN if [ -f package-lock.json ]; then \
     else \
       echo "AVISO: package-lock.json no encontrado; se usará npm install"; \
       npm install --no-audit --no-fund; \
-    fi
-
-# ---- Compilación ----
-FROM node:22-bookworm-slim AS builder
-WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1
-# Valor sólo para compilar: no se conecta a ninguna base durante el build.
-ENV DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build
-COPY --from=deps /app/node_modules ./node_modules
+    fi \
+ && npm cache clean --force
 COPY . .
-RUN npm run build
+RUN npm run build && rm -rf /app/node_modules/.cache
 
 # ---- Imagen final ----
+# Next.js en modo `standalone` ya incluye en .next/standalone las dependencias
+# que usa el servidor: no hace falta copiar node_modules entero a la imagen.
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
