@@ -419,6 +419,7 @@ export const KPI = {
 export const NAV = [
   { id: "panel", label: "Panel", icon: "grid" },
   { id: "cuentas", label: "Cuentas", icon: "wallet" },
+  { id: "movimientos", label: "Movimientos", icon: "list" },
   { id: "inversiones", label: "Inversiones", icon: "briefcase" },
   { id: "categorias", label: "Categorías", icon: "folder" },
   { id: "graficas", label: "Gráficas", icon: "chart" },

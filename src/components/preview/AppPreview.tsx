@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { BarChart3, Bell, Briefcase, Check, ChevronDown, ChevronRight, ChevronUp, FolderTree, LayoutDashboard, PiggyBank, Plus, Search, Settings, Wallet } from "lucide-react";
+import { ArrowLeftRight, BarChart3, Bell, Briefcase, Check, ChevronDown, ChevronRight, ChevronUp, FolderTree, LayoutDashboard, PiggyBank, Plus, Search, Settings, Wallet } from "lucide-react";
 import type { DesignConfig } from "@/lib/themes";
 import { toCssVars } from "@/lib/themes";
 import { NAV, type NavId } from "@/lib/mock";
@@ -14,6 +14,7 @@ import { Btn, Toast } from "./primitives";
 import { ModalHost } from "./forms";
 import { usePaletteLibrary } from "./palettes";
 import { AccountsView, PanelView, PortfolioView, useTotals } from "./views-main";
+import { MovementsView } from "./movimientos";
 import { useIsNarrow } from "./use-viewport";
 import { CategoriesView, ChartsView, SettingsView } from "./views-extra";
 
@@ -21,6 +22,7 @@ const ICON: Record<string, ReactNode> = {
   grid: <LayoutDashboard className="h-[17px] w-[17px]" />,
   briefcase: <Briefcase className="h-[17px] w-[17px]" />,
   wallet: <Wallet className="h-[17px] w-[17px]" />,
+  list: <ArrowLeftRight className="h-[17px] w-[17px]" />,
   folder: <FolderTree className="h-[17px] w-[17px]" />,
   chart: <BarChart3 className="h-[17px] w-[17px]" />,
   settings: <Settings className="h-[17px] w-[17px]" />,
@@ -46,6 +48,7 @@ function CurrentView() {
   const { route } = usePreview();
   switch (route.page) {
     case "cuentas": return <AccountsView />;
+    case "movimientos": return <MovementsView />;
     case "inversiones": return <PortfolioView />;
     case "categorias": return <CategoriesView />;
     case "graficas": return <ChartsView />;
@@ -426,8 +429,9 @@ function MobileNav() {
     { id: "cuentas", label: "Cuentas" },
     { id: "inversiones", label: "Cartera" },
   ];
-  /* El último acceso es un desplegable: Categorías, Gráficas y Ajustes. */
+  /* El último acceso es un desplegable: Movimientos, Categorías, Gráficas y Ajustes. */
   const extra: { id: NavId; label: string; icon: ReactNode }[] = [
+    { id: "movimientos", label: "Movimientos", icon: ICON.list },
     { id: "categorias", label: "Categorías", icon: ICON.folder },
     { id: "graficas", label: "Gráficas", icon: ICON.chart },
     { id: "ajustes", label: "Ajustes", icon: ICON.settings },

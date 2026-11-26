@@ -205,8 +205,8 @@ export function TxList({
 }: {
   txs: Tx[];
   limit?: number;
-  /** Filas por página; si se indica, la tabla se pagina con un selector de páginas. */
-  pageSize?: number;
+  /** Filas por página; si se indica, la tabla se pagina con un selector de páginas. `"all"` las muestra todas. */
+  pageSize?: number | "all";
   showAccount?: boolean;
   filterable?: boolean;
   /** La lista ya pertenece a una categoría: no se muestra el filtro de categoría */
@@ -232,13 +232,16 @@ export function TxList({
 
   /* Paginación opcional: como máximo `pageSize` filas por página. */
   const [page, setPage] = useState(1);
-  const pages = pageSize ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
+  const perPage = typeof pageSize === "number" && pageSize > 0 ? pageSize : null;
+  const pages = perPage ? Math.max(1, Math.ceil(filtered.length / perPage)) : 1;
   const current = Math.min(page, pages);
-  const shown = pageSize
-    ? filtered.slice((current - 1) * pageSize, current * pageSize)
-    : limit
-      ? filtered.slice(0, limit)
-      : filtered;
+  const shown = perPage
+    ? filtered.slice((current - 1) * perPage, current * perPage)
+    : pageSize === "all"
+      ? filtered
+      : limit
+        ? filtered.slice(0, limit)
+        : filtered;
 
   /* Saldo resultante: sólo tiene sentido cuando toda la lista es de una cuenta. */
   const balances = useMemo(() => runningBalances(accounts, allTxs), [accounts, allTxs]);
@@ -322,15 +325,40 @@ export function TxList({
       </div>
       {oneAccount && <p className="pv-faint text-[10.5px]" style={{ padding: "0 var(--pad) 6px" }}>El saldo bajo cada importe es el de la cuenta después de ese movimiento.</p>}
       <RowList items={rows} empty={txs.length ? "Ningún movimiento coincide con los filtros" : "Sin movimientos en este periodo"} />
-      {pageSize && filtered.length > 0 && (
+      {perPage && filtered.length > 0 && (
         <>
           <Pager page={current} pages={pages} onChange={setPage} />
           <p className="pv-faint text-center text-[11px]" style={{ padding: "0 var(--pad) 12px" }}>
-            {`${(current - 1) * pageSize + 1}–${Math.min(current * pageSize, filtered.length)} de ${filtered.length} movimientos · página ${current} de ${pages}`}
+            {`${(current - 1) * perPage + 1}–${Math.min(current * perPage, filtered.length)} de ${filtered.length} movimientos · página ${current} de ${pages}`}
           </p>
         </>
       )}
+      {pageSize === "all" && filtered.length > 0 && (
+        <p className="pv-faint text-center text-[11px]" style={{ padding: "0 var(--pad) 12px" }}>
+          {`${filtered.length} ${filtered.length === 1 ? "movimiento" : "movimientos"} · todos a la vista`}
+        </p>
+      )}
     </>
+  );
+}
+
+/* ------------------------- movimientos por página ------------------------- */
+
+/** Cuántos movimientos se ven por página en la ficha de una cuenta. */
+export const PAGE_SIZES = [10, 15, 30, 60] as const;
+export type PageSizeChoice = (typeof PAGE_SIZES)[number] | "all";
+
+/** Selector «10 · 15 · 30 · 60 · Todos» para las listas de movimientos. */
+function PageSizePicker({ value, onChange, total }: { value: PageSizeChoice; onChange: (v: PageSizeChoice) => void; total: number }) {
+  return (
+    <Segmented
+      options={[
+        ...PAGE_SIZES.map((n) => ({ id: String(n), label: String(n) })),
+        { id: "all", label: `Todos${total > 0 ? ` (${total})` : ""}` },
+      ]}
+      value={String(value)}
+      onChange={(v) => onChange(v === "all" ? "all" : (Number(v) as PageSizeChoice))}
+    />
   );
 }
 
@@ -853,6 +881,8 @@ function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedde
     .filter((c) => c.spent > 0)
     .sort((x, y) => y.spent - x.spent);
   const openCat = (id: number | string | undefined) => typeof id === "number" && openModal({ kind: "categoryTx", categoryId: id });
+  /* Movimientos por página de esta cuenta: 15 por defecto, o todos de golpe. */
+  const [pageSize, setPageSize] = useState<PageSizeChoice>(15);
 
   const kpis = [
     { label: "Saldo actual", value: formatEUR(acc.balance), delta: formatSigned(d), trend: trend(d), icon: <Wallet className="h-4 w-4" />, colorIdx: acc.colorIdx, footnote: periodShort(period), pct: 100 },
@@ -905,9 +935,20 @@ function CurrentAccountDetail({ acc, embedded = false }: { acc: Account; embedde
       </Panel>
       <Panel pad={false}>
         <div style={{ padding: "var(--pad)" }}>
-          <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
+          <SectionTitle
+            sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`}
+            action={
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <span className="pv-muted mr-0.5 text-[10.5px] font-bold uppercase tracking-[0.1em]">Por página</span>
+                <PageSizePicker value={pageSize} onChange={setPageSize} total={txs.length} />
+                <Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>
+              </div>
+            }
+          >
+            Movimientos
+          </SectionTitle>
         </div>
-        <TxList txs={txs} pageSize={12} showAccount={false} />
+        <TxList txs={txs} pageSize={pageSize} showAccount={false} />
       </Panel>
     </Stack>
     </Tinted>
@@ -953,7 +994,10 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
     [prods],
   );
   const opsInPeriod = useMemo(() => opsAll.filter((r) => inPeriod(r.op.date, period)), [opsAll, period]);
-  const opsShown = opsAll.slice(0, isMobile ? 8 : 12);
+  /* Cuántas operaciones se ven de golpe (la lista se desplaza dentro del panel). */
+  const [opsPage, setOpsPage] = useState<PageSizeChoice>(isMobile ? 10 : 15);
+  const opsShown = opsPage === "all" ? opsAll : opsAll.slice(0, opsPage);
+  const [pageSize, setPageSize] = useState<PageSizeChoice>(15);
   const opsMissingExpenses = useMemo(() => {
     const linked = new Set(transactions.filter((t) => t.productId !== undefined).map((t) => `${t.productId}:${t.operationId}`));
     return prods.reduce(
@@ -1065,9 +1109,17 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
                   : "Todavía no hay compras ni ventas de estos productos"
               }
               action={
-                <Btn variant="ghost" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: prods[0]?.id })}>
-                  Nueva operación
-                </Btn>
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  {opsAll.length > 0 && (
+                    <>
+                      <span className="pv-muted mr-0.5 text-[10.5px] font-bold uppercase tracking-[0.1em]">Ver</span>
+                      <PageSizePicker value={opsPage} onChange={setOpsPage} total={opsAll.length} />
+                    </>
+                  )}
+                  <Btn variant="ghost" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "operation", productId: prods[0]?.id })}>
+                    Nueva operación
+                  </Btn>
+                </div>
               }
             >
               Operaciones de los productos
@@ -1147,9 +1199,20 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
       </PanelGrid>
       <Panel pad={false}>
         <div style={{ padding: "var(--pad)" }}>
-          <SectionTitle sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`} action={<Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>}>Movimientos</SectionTitle>
+          <SectionTitle
+            sub={`${txs.length} movimientos · ${periodLabel(period).toLowerCase()}`}
+            action={
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <span className="pv-muted mr-0.5 text-[10.5px] font-bold uppercase tracking-[0.1em]">Por página</span>
+                <PageSizePicker value={pageSize} onChange={setPageSize} total={txs.length} />
+                <Btn variant="ghost" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportTxCsv(`movimientos-${acc.name.toLowerCase().replace(/\s+/g, "-")}.csv`, all, categories, accounts, transactions)}>Exportar CSV</Btn>
+              </div>
+            }
+          >
+            Movimientos
+          </SectionTitle>
         </div>
-        <TxList txs={txs} pageSize={12} showAccount={false} />
+        <TxList txs={txs} pageSize={pageSize} showAccount={false} />
       </Panel>
     </Stack>
     </Tinted>
