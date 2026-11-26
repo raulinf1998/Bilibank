@@ -8,7 +8,17 @@ export const dynamic = "force-dynamic";
 export default async function InstalacionPage() {
   let markdown = "No se encontró la guía de instalación en este contenedor.";
   try {
-    markdown = await readFile(path.join(process.cwd(), "deploy", "README.md"), "utf8");
+    /* Guía completa + resumen operativo (incluye el problema de espacio al
+       construir la imagen con Docker). */
+    const parts: string[] = [];
+    for (const name of ["README.md", "INSTALACION.md"]) {
+      try {
+        parts.push(await readFile(path.join(process.cwd(), "deploy", name), "utf8"));
+      } catch {
+        // Si falta una de las dos, se muestra la otra.
+      }
+    }
+    if (parts.length) markdown = parts.join("\n\n---\n\n");
   } catch {
     // Keep the fallback message.
   }

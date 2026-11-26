@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   // Permite que la vista previa del sandbox use los recursos de desarrollo.
   allowedDevOrigins: ["3000-ip8ny6nqgybb48bt1o32w.e2b.app"],
   outputFileTracingIncludes: {
-    "/instalacion": ["./deploy/README.md"],
+    "/instalacion": ["./deploy/README.md", "./deploy/INSTALACION.md"],
     // Export de MoneyMatter usado como datos iniciales (también dentro de Docker).
     "/": ["./data/moneymatter/*"],
     "/app": ["./data/moneymatter/*"],

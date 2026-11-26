@@ -1,10 +1,23 @@
+# Dependencias y artefactos: siempre se generan dentro de la imagen.
 node_modules
 .next
+out
+build
+coverage
+*.tsbuildinfo
+
+# Repositorio y metadatos
 .git
+.gitignore
+.github
 .env
 .env.*
 npm-debug.log*
 *.log
+
+# Contenido que no hace falta para compilar.
+# `data/` NO se ignora: el modo standalone copia la semilla de MoneyMatter
+# dentro de la imagen (outputFileTracingIncludes en next.config.ts).
 public/download
 docs
 deploy
