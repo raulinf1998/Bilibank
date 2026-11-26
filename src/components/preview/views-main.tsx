@@ -16,7 +16,7 @@ import { FULL_DAYS, TODAY, addDays, periodChipExtra, periodRange, bucketLabels, 
 import { formatEUR, formatEUR0, formatNum, formatPct, formatDate, formatFullDate, formatSigned } from "@/lib/format";
 import { shortDate, todayIso } from "@/lib/market";
 import { isTransfer, runningBalances, singleAccount, transferEndpoints } from "@/lib/ledger";
-import { cashOf, cashOperation, productsValueOf, valueOf } from "@/lib/cash";
+import { cashOf, missingExpenseOperations, pendingPurchaseExpenses, productsValueOf, valueOf } from "@/lib/cash";
 import { CompareBars, Donut, HBars, MultiLines, Sparkline, StackedArea, StackedBars, TrendChart, downsample } from "./charts";
 import { PriceChartWithPurchases } from "./purchase-chart";
 import { operationResults, operationTotals } from "@/lib/operations";
@@ -998,14 +998,15 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
   const [opsPage, setOpsPage] = useState<PageSizeChoice>(isMobile ? 10 : 15);
   const opsShown = opsPage === "all" ? opsAll : opsAll.slice(0, opsPage);
   const [pageSize, setPageSize] = useState<PageSizeChoice>(15);
-  const opsMissingExpenses = useMemo(() => {
-    const linked = new Set(transactions.filter((t) => t.productId !== undefined).map((t) => `${t.productId}:${t.operationId}`));
-    return prods.reduce(
-      (sum, holding) =>
-        sum + holding.operations.filter((op) => cashOperation(op) && !linked.has(`${holding.id}:${op.id}`)).length,
-      0,
-    );
-  }, [prods, transactions]);
+  /* Compras de los productos de la cuenta que aún no tienen su gasto en el
+     efectivo. Mismo cálculo que usa el botón «Cargar N compras», para que el
+     número de la cabecera y lo que se anota nunca puedan discrepar. */
+  const missingPurchases = useMemo(
+    () => pendingPurchaseExpenses(acc.id, holdings, transactions),
+    [acc.id, holdings, transactions],
+  );
+  const opsMissingExpenses = missingPurchases.length;
+  const missingTotal = missingPurchases.reduce((sum, row) => sum + row.cost, 0);
 
   const kpis = [
     { label: "Valor total", value: formatEUR(total), delta: formatPct(changePct(win)), trend: trend(changePct(win)), icon: <Briefcase className="h-4 w-4" />, colorIdx: acc.colorIdx, footnote: `productos + efectivo · ${periodShort(period)}`, pct: 100 },
@@ -1025,6 +1026,16 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
     <>
       <Btn variant="ghost" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "editAccount", accountId: acc.id })}>Editar</Btn>
       <Btn variant="ghost" icon={<ArrowLeftRight className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "transfer" })}>Traspasar</Btn>
+      <Btn
+        variant="ghost"
+        icon={<ShoppingCart className="h-3.5 w-3.5" />}
+        aria={opsMissingExpenses > 0
+          ? `Anotar como gasto del efectivo las ${opsMissingExpenses} compras de los productos de esta cuenta`
+          : "Las compras de los productos de esta cuenta ya están anotadas en el efectivo"}
+        onClick={() => openModal({ kind: "confirmPurchases", accountId: acc.id })}
+      >
+        {opsMissingExpenses > 0 ? `Cargar ${opsMissingExpenses} ${opsMissingExpenses === 1 ? "compra" : "compras"}` : "Compras cargadas"}
+      </Btn>
       <Btn icon={<Plus className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "product", accountId: acc.id })}>Añadir producto</Btn>
     </>
   );
@@ -1126,12 +1137,16 @@ function InvestmentAccountDetail({ acc, embedded = false }: { acc: Account; embe
             </SectionTitle>
           </div>
           {opsMissingExpenses > 0 && (
-            <p className="mx-4 mb-2 flex items-start gap-2 text-[11.5px] leading-snug" style={{ color: "var(--accent)" }}>
-              <ReceiptText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>
-                Hay {opsMissingExpenses} {opsMissingExpenses === 1 ? "operación" : "operaciones"} sin movimiento en la cuenta.
-                Abre cada producto y pulsa «Anotar» para registrarlas.
+            <p className="mx-4 mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] leading-snug" style={{ color: "var(--accent)" }}>
+              <ReceiptText className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">
+                Hay {opsMissingExpenses} {opsMissingExpenses === 1 ? "compra" : "compras"} sin gasto en el efectivo
+                ({formatEUR(missingTotal)}). El botón <b>Cargar {opsMissingExpenses} {opsMissingExpenses === 1 ? "compra" : "compras"}</b> las
+                anota todas de una vez, cada una con la fecha de la compra y lo que costó ese día.
               </span>
+              <Btn variant="ghost" size="sm" icon={<ShoppingCart className="h-3.5 w-3.5" />} onClick={() => openModal({ kind: "confirmPurchases", accountId: acc.id })}>
+                Anotar ahora
+              </Btn>
             </p>
           )}
           {opsShown.length > 0 ? (
@@ -2096,11 +2111,7 @@ function ProductDetail({ id }: { id: number }) {
   const full = useMemo(() => (h ? productSeries(h) : []), [h]);
   /* Operaciones del producto que mueven dinero y aún no tienen su movimiento
      anotado en la cuenta (típico tras importar de otra app). */
-  const missingExpenses = useMemo(() => {
-    if (!h) return [];
-    const linked = new Set(transactions.filter((t) => t.productId === h.id).map((t) => t.operationId));
-    return h.operations.filter((op) => cashOperation(op) && !linked.has(op.id));
-  }, [h, transactions]);
+  const missingExpenses = useMemo(() => (h ? missingExpenseOperations(h, transactions) : []), [h, transactions]);
   if (!h) return null;
   const acc = accounts.find((a) => a.id === h.accountId);
   const v = holdingValue(h);
